@@ -35,6 +35,7 @@ module Mechahue
     end
 
     attr_reader :hostname, :id, :key, :resources, :default_duration, :default_long_press_threshold
+    attr_accessor :monitor_interval
 
     def initialize(info={})
       @hostname = info[:hostname] || info[:ip]
@@ -43,18 +44,37 @@ module Mechahue
       @resources = {}
       @default_duration = 0.5
       @default_long_press_threshold = 0.5
+      @monitor_interval = 60.0
       @event_watchers = []
     end
 
     def activate
       start_event_stream
       refresh
-      # TODO: periodically refresh in the background, just to be safe
+      start_monitor
     end
 
     def deactivate
       stop_event_stream
-      # TODO: stop periodic background refresh
+      stop_monitor
+    end
+
+    def start_monitor
+      ts = Time.now
+      @monitoring = ts
+      Thread.new do
+        while @monitoring == ts do
+          begin
+            refresh
+            sleep @monitor_interval
+          rescue Exception => exc
+            puts "Hub #{id} monitor thread caught exception: #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
+          end
+        end
+      end
+    end
+
+    def stop_monitor
     end
 
     def start_event_stream
