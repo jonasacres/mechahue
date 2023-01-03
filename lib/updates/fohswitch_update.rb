@@ -1,5 +1,5 @@
 module Mechahue::Update
-  class FOHSwitchUpdate
+  class FOHSwitchUpdate < Base
     attr_reader :duration
 
     def initialize(resource, info)
@@ -14,7 +14,7 @@ module Mechahue::Update
     end
 
     def self.supported_resource
-      Mechahue::Resource::Base
+      Mechahue::Resource::FOHSwitch
     end
 
     def upper_left?
@@ -89,7 +89,7 @@ module Mechahue::Update
       end
 
       @resolved = true
-      @on_resolved.each do { |block| block.call(duration) }
+      @on_resolved.each { |block| block.call(duration) }
     end
 
     def check_resolved

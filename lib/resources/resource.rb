@@ -1,30 +1,31 @@
 module Mechahue::Resource
-  def self.type
-    self.name.to_s.split("::").last.downcase
-  end
-
   def self.resources
-    ObjectSpace.each_object(Class).select { |klass| klass < Base }
+    return @resources if @resources
+
+    @resources = {}
+    ObjectSpace.each_object(Class).select { |klass| klass < Base }.each { |klass| @resources[klass.type] = klass }
+    @resources
   end
 
   def self.with_hub_and_info(native_hub, info={})
-    self.resources.each do |resource|
-      return resource.construct(native_hub, info) if resource.type == info[:type]
-    end
-
-    Base.new(native_hub, info)
-  end
-
-  def self.construct(native_hub, info={})
-    self.new(native_hub, info)
+    klass = self.resources[info[:type]] || Base
+    klass.construct(native_hub, info)
   end
 
   class Base
     attr_reader :id, :id_v1, :info, :type, :native_hub, :sequence, :last_update
 
+    def self.construct(native_hub, info={})
+      self.new(native_hub, info)
+    end
+
+    def self.type
+      self.name.to_s.split("::").last.downcase
+    end
+
     def initialize(native_hub, info={})
       @native_hub = native_hub
-      @info = data
+      @info = info
       @watches = []
       @sequence = 0
     end
@@ -105,6 +106,16 @@ module Mechahue::Resource
 
     def delete
       native_hub.delete_v2(endpoint)
+    end
+
+    def to_s
+      str = "#{type} #{id}"
+      str += " '#{name}'" if name
+      str
+    end
+
+    def inspect
+      to_s
     end
   end
 end

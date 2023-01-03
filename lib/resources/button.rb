@@ -12,6 +12,7 @@ module Mechahue::Resource
                                      .map { |addr_match| addr_match[1] }
                                      .map { |group_id_v1| switch.native_hub.grouped_lights.select { |group| group.id_v1 == group_id_v1 }.first }
                                      .map { |native_group| switch.hub.grouped_lights.select { |group| group.id == native_group.id }.first }
+      end
     end
   end
 end

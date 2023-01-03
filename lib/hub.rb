@@ -1,8 +1,8 @@
 module Mechahue
   class Hub
     def self.named(hostname)
-      # take a hostname, return a Hub
-      # do registration if that's a thing we still need to do
+      # TODO: try to register if we don't have this hub yet. block on wait for link button, raise exception on all other errors.
+      stored[hostname]
     end
 
     def self.default_authfile_path
@@ -10,17 +10,31 @@ module Mechahue
     end
 
     def self.stored(authfile=nil)
+      return @stored_hubs if @stored_hubs
       authfile ||= default_authfile_path
+      return {} unless File.exists?(authfile)
+
+
       begin
-        JSON.parse(authfile).map do |hub_info|
-          Hub.new(hub_info)    
+        hubs = JSON.parse(IO.read(authfile), symbolize_names:true)[:records].values.map do |hub_info|
+          Hub.new(hub_info)
         end
+
+        @stored_hubs = {}
+        hubs.each do |hub|
+          @stored_hubs[hub.hostname] = hub
+        end
+        @stored_hubs
+      rescue JSON::ParserError => exc
+        STDERR.puts "Can't read authfile: unparseable JSON, #{exc}"
+        {}
       rescue Exception => exc
-        []
+        STDERR.puts "Error instantiating hubs: #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}" if File.exists?(authfile)
+        {}
       end
     end
 
-    attr_reader :resources, :default_duration, :default_long_press_threshold
+    attr_reader :hostname, :id, :key, :resources, :default_duration, :default_long_press_threshold
 
     def initialize(info={})
       @hostname = info[:hostname] || info[:ip]
@@ -29,6 +43,8 @@ module Mechahue
       @resources = {}
       @default_duration = 0.5
       @default_long_press_threshold = 0.5
+      @event_watchers = []
+      refresh
     end
 
     def start_event_stream
@@ -42,17 +58,31 @@ module Mechahue
         response.read_body do |chunk|
           pending += chunk
           lines = pending.split("\n")
-          lines[0..-2].each do |line|
-            next unless m = line.match(/^(\w+): (.*)$/)
-            cmd, data = m[1]
+          if pending.end_with?("\n") then
+            pending = ""
+          else
+            pending += lines.last
+            lines = lines[0..-2]
+          end
+
+
+          lines.each do |line|
+            next unless m = line.match(/^(\w+): (.+)$/)
+            cmd, data = m[1..2]
 
             case cmd
             when "data"
               messages = JSON.parse(data, symbolize_names:true)
               messages.each do |msg|
                 case msg[:type]
-                when :update
-                  Mechahue::Update.with_hub_and_info(self, msg)
+                when "update"
+                  begin
+                    update = Mechahue::Update.with_hub_and_info(self, msg)
+                    puts "Processing update"
+                    notify_event(:update, update)
+                  rescue Exception => exc
+                    puts "Exception #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
+                  end
                 end
               end
             end
@@ -62,11 +92,11 @@ module Mechahue
 
       request_args = {
         method: :get,
-        url: "https://hue-upper.culdesac.kobalabs.net/eventstream/clip/v2",
+        url: "https://#{hostname}/eventstream/clip/v2",
         verify_ssl: OpenSSL::SSL::VERIFY_NONE,
-        headers: {:"hue-application-key" => @key},
-        block_response: chunk_handler
-        read_timeout: 60*60*24*365.24*100
+        headers: {:"hue-application-key" => @key, :"Accept" => "text/event-stream"},
+        block_response: chunk_handler,
+        read_timeout: 60*60*24*365.24*100,
       }
 
       Thread.new do
@@ -85,14 +115,22 @@ module Mechahue
       self
     end
 
+    def notify_event(type, event)
+      @event_watchers.select! { |watcher| watcher.notify(type, event) }
+    end
+
+    def watch(types=nil, &block)
+      @event_watchers << EventWatcher.new(types, &block)
+      self
+    end
+
     def stop_event_stream
       @event_stream_start = nil
       self
     end
 
     def find(params={})
-      results = @resources.values
-      params.keys.inject(@resources) { |results, key| results.select { |res| res[key] == params[key] } }
+      results = params.keys.inject(@resources.values) { |results, key| results.select { |res| res[key] == params[key] } }
       results = results.select { |resource| yield(resource) } if block_given?
       results
     end
@@ -143,8 +181,8 @@ module Mechahue
 
     def refresh
       get_v2("/resource").each do |info|
-        @resources[resource[:id]] ||= Resource.with_hub_and_info(self, info)
-        @resources[resource[:id]].update(info)
+        @resources[info[:id]] ||= Resource.with_hub_and_info(self, info)
+        @resources[info[:id]].update(info)
       end
     end
 
@@ -157,9 +195,13 @@ module Mechahue
         raise "Unresolvable reference: #{info.to_json}, expected id, type or rid, rtype fields"
       end
 
+      puts "Resolving #{type} #{id}"
       return @resources[id] if @resources[id]
+      puts "Doing lookup"
       @resources[id] = Resource.with_hub_and_info(id: id, type: type)
       @resources[id].refresh
+      puts "OK, looked it up"
+      @resources[id]
     end
 
     def get_v2(endpoint)
@@ -178,8 +220,8 @@ module Mechahue
       request_v2(:delete, endpoint)
     end
 
-    def request_v2(method, endpoint, payload=nil, headers={}, args={})
-      resp, result = rest_request(method, File.join("/clip/v2", endpoint), payload, { :"hue-application-key" => @key }.merge(headers), args)
+    def request_v2(method, endpoint, payload=nil, headers={}, params={})
+      resp, result = rest_request(method, File.join("/clip/v2", endpoint), payload, { :"hue-application-key" => @key }.merge(headers), params)
 
       unless result[:errors].empty? then
         raise RequestFailedException.new(url, method, payload, resp, result, "Server response listed errors: #{result[:errors].to_json}")
@@ -204,7 +246,7 @@ module Mechahue
       request_v1(:delete, endpoint)
     end
 
-    def request_v1(method, endpoint, payload=nil, headers={}, args={})
+    def request_v1(method, endpoint, payload=nil, headers={}, params={})
       args = {
         squish_single:true,
       }.merge(params)
@@ -241,11 +283,15 @@ module Mechahue
       return retval
     end
 
-    def rest_request(method, endpoint, payload=nil, headers={}, args={})
+    def rest_request(method, endpoint, payload=nil, headers={}, params={})
       args = {
         rest_args:{},
       }.merge(params)
-      params[:rest_args].merge!(args[:rest_args]) if args[:rest_args].is_a?(Hash)
+      args[:rest_args].merge!(params[:rest_args]) if params[:rest_args].is_a?(Hash)
+
+      url = File.join("https://#{hostname}", endpoint)
+
+      puts "#{method} #{url}"
 
       begin
         request_args = {
@@ -294,6 +340,33 @@ module Mechahue
 
     def to_s
       "Request failed: #{method.to_s.upcase} #{endpoint} #{description}"
+    end
+  end
+
+  class EventWatcher
+    attr_reader :block
+
+    def initialize(types, &block)
+      @types = types ? [*types] : nil
+      @block = block
+    end
+
+    def notify(type, event)
+      puts "notify #{type}"
+      block.call(event) unless @cancelled || !wants?(type)
+      !@cancelled
+    end
+
+    def wants?(type)
+      @types.nil? || types.include?(type)
+    end
+
+    def cancelled?
+      @cancelled
+    end
+
+    def cancel
+      @cancelled = true
     end
   end
 end

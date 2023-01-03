@@ -1,0 +1,28 @@
+#!/usr/bin/env ruby
+
+path = __FILE__
+path = File.readlink(path) while File.symlink?(path)
+basepath = File.expand_path(File.dirname(path) + '/..')
+lib = File.join(basepath, 'lib')
+$LOAD_PATH.unshift(lib) if File.directory?(lib) && !$LOAD_PATH.include?(lib)
+
+require 'mechahue'
+require 'irb'
+include Mechahue
+
+def init
+  $upper_hub = Mechahue::Hub.named("hue-upper.culdesac.kobalabs.net")
+  $lower_hub = Mechahue::Hub.named("hue-lower.culdesac.kobalabs.net")
+  $hubs = [ $upper_hub, $lower_hub ]
+end
+
+time = Time.now
+init
+
+$upper_hub.watch do |type, event|
+  puts "NEW EVENT:\n#{event}"
+end
+
+$upper_hub.start_event_stream
+
+binding.irb

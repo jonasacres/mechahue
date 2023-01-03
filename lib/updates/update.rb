@@ -1,23 +1,27 @@
 module Mechahue::Update
   def self.updates
-    ObjectSpace.each_object(Class).select { |klass| klass < Base }
+    @updates ||= ObjectSpace.each_object(Class).select { |klass| klass <= Base }
   end
 
   def self.with_hub_and_info(hub, info)
-    resource = hub.resolve_reference(info)
+    resource = hub.resolve_reference(info[:data].first)
     self.with_resource_and_info(resource, info)
   end
 
   def self.with_resource_and_info(resource, info)
-    klass = self.updates.select { |update| resource < update.supported_resource }.min
+    klass = self.updates.select { |update| resource.class <= update.supported_resource }.min
     klass.construct(resource, info)
   end
 
-  def self.construct(resource, info)
-    self.new(resource, info)
-  end
-
   class Base
+    def self.supported_resource
+      Mechahue::Resource::Base
+    end
+
+    def self.construct(resource, info)
+      self.new(resource, info)
+    end
+
     attr_reader :resource, :diff, :info, :old_state, :creation_time, :received_time, :sequence
 
     def initialize(resource, info)

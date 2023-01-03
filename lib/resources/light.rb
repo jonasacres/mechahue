@@ -1,7 +1,7 @@
 module Mechahue::Resource
   class Light < Base
     def mechacolor
-      Color.from_light(info)
+      Mechahue::Color.from_light(info)
     end
 
     def set_color(new_color, additional={})
