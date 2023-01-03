@@ -1,0 +1,63 @@
+#!/usr/bin/ruby
+
+require 'mechahue'
+include Mechahue
+
+# these should go get my cached hub; if no such cached hub exists, attempt to register
+# if we need to register, do that, and block until the button is pushed but throw an exception for any other error.
+upper_hub = Mechahue::Hub.named("hue-upper.culdesac.kobalabs.net")
+lower_hub = Mechahue::Hub.named("hue-lower.culdesac.kobalabs.net")
+
+hubs = [ upper_hub, lower_hub ]
+hubs.each { |hub| hub.start_event_stream }
+
+hubs.each do |hub|
+  hub.devices.each do |sensor|
+    next unless sensor.is_a?(FOHSwitch)
+
+    switch.watch do |update|
+      switch.grouped_lights(update.control_id).each do |group|
+        mutlihub.end_task(group.id)
+      end
+
+      update.on_resolve do |duration|
+        if update.lower_left? && update.long_press? then
+          # hub.task defines a new task for a given UUID.
+          # tasks are run regularly, every hub.program_tick seconds.
+          # if a UUID already has a task, then that task will be removed and the new task will be scheduled.
+          switch.grouped_lights(update.control_id).each do |group|
+            hub.task(group.id) do
+              period = 4 * 60.0 * 60.0 # 4 hours as seconds
+              radians_per_second = Math::2_PI / period
+              radians_per_tick = radians_per_second * hub.program_tick
+
+              group.owner.lights.each do |light|
+                light.rotate(radians_per_tick, duration: hub.program_tick)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+# master bedroom closet switch
+upper_hub.resources["15fda4b4-738c-40c1-b24e-fb1570f159dc"].watch do |update|
+  next unless update.lower_right? && update.long_press_release?
+
+  hubs.each do |hub|
+    hub.rooms.each do |room|
+      if scene = room.scene("Bedtime") then
+        scene.recall(duration: 60.0 * 5)
+      else
+        room.grouped_lights.set_on(false, duration: 60.0 * 5)
+      end
+    end
+  end
+
+  # TODO: integrate with homeasst to...
+  #   - lock the doors
+  #   - close the garage
+end
+
