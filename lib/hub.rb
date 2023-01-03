@@ -44,7 +44,17 @@ module Mechahue
       @default_duration = 0.5
       @default_long_press_threshold = 0.5
       @event_watchers = []
+    end
+
+    def activate
+      start_event_stream
       refresh
+      # TODO: periodically refresh in the background, just to be safe
+    end
+
+    def deactivate
+      stop_event_stream
+      # TODO: stop periodic background refresh
     end
 
     def start_event_stream
@@ -58,32 +68,29 @@ module Mechahue
         response.read_body do |chunk|
           pending += chunk
           lines = pending.split("\n")
+          
           if pending.end_with?("\n") then
             pending = ""
           else
-            pending += lines.last
+            pending = lines.last
             lines = lines[0..-2]
           end
 
 
           lines.each do |line|
-            next unless m = line.match(/^(\w+): (.+)$/)
-            cmd, data = m[1..2]
+            next unless line.start_with?("data: ")
+            data = line["data: ".length .. -1]
 
-            case cmd
-            when "data"
-              messages = JSON.parse(data, symbolize_names:true)
-              messages.each do |msg|
+            messages = JSON.parse(data, symbolize_names:true) rescue []
+            messages.each do |msg|
+              begin
                 case msg[:type]
                 when "update"
-                  begin
-                    update = Mechahue::Update.with_hub_and_info(self, msg)
-                    puts "Processing update"
-                    notify_event(:update, update)
-                  rescue Exception => exc
-                    puts "Exception #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
-                  end
+                  updates = Mechahue::Update.with_hub_and_batch(self, msg)
+                  updates.each { |update| notify_event(:update, update) }
                 end
+              rescue Exception => exc
+                puts "Exception #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
               end
             end
           end
@@ -108,6 +115,7 @@ module Mechahue
           end
 
           last_attempt = Time.now
+          puts "Starting event thread"
           RestClient::Request::execute(request_args) rescue nil
         end
       end
@@ -182,7 +190,7 @@ module Mechahue
     def refresh
       get_v2("/resource").each do |info|
         @resources[info[:id]] ||= Resource.with_hub_and_info(self, info)
-        @resources[info[:id]].update(info)
+        @resources[info[:id]].update_with_info(info)
       end
     end
 
@@ -195,12 +203,9 @@ module Mechahue
         raise "Unresolvable reference: #{info.to_json}, expected id, type or rid, rtype fields"
       end
 
-      puts "Resolving #{type} #{id}"
       return @resources[id] if @resources[id]
-      puts "Doing lookup"
       @resources[id] = Resource.with_hub_and_info(id: id, type: type)
       @resources[id].refresh
-      puts "OK, looked it up"
       @resources[id]
     end
 
@@ -306,7 +311,7 @@ module Mechahue
 
         resp = RestClient::Request.execute(request_args)
       rescue RestClient::RequestFailed => exc
-        raise RequestFailedException.new(url, method, payload,
+        raise RequestFailedException.new(url, method, payload, nil, nil,
           "Server returned #{exc.class}")
       end
 
@@ -352,7 +357,6 @@ module Mechahue
     end
 
     def notify(type, event)
-      puts "notify #{type}"
       block.call(event) unless @cancelled || !wants?(type)
       !@cancelled
     end

@@ -2,7 +2,7 @@ module Mechahue::Update
   class FOHSwitchUpdate < Base
     attr_reader :duration
 
-    def initialize(resource, info)
+    def initialize(resource, batch, batch_info, resource_info)
       super
 
       @on_resolve = []

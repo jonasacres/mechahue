@@ -11,18 +11,19 @@ require 'irb'
 include Mechahue
 
 def init
-  $upper_hub = Mechahue::Hub.named("hue-upper.culdesac.kobalabs.net")
-  $lower_hub = Mechahue::Hub.named("hue-lower.culdesac.kobalabs.net")
-  $hubs = [ $upper_hub, $lower_hub ]
+  # $upper_hub = Mechahue::Hub.named("hue-upper.culdesac.kobalabs.net")
+  # $lower_hub = Mechahue::Hub.named("hue-lower.culdesac.kobalabs.net")
+  $office_hub = Mechahue::Hub.named("hue.kobalabs.net")
+  $hubs = [ $upper_hub, $lower_hub, $office_hub ]
 end
 
 time = Time.now
 init
 
-$upper_hub.watch do |type, event|
-  puts "NEW EVENT:\n#{event}"
+$office_hub.activate
+$office_hub.watch do |update|
+  puts "NEW EVENT:\r\n#{update}"
 end
 
-$upper_hub.start_event_stream
 
-binding.irb
+while true ; sleep 5 ; end

@@ -9,7 +9,7 @@ upper_hub = Mechahue::Hub.named("hue-upper.culdesac.kobalabs.net")
 lower_hub = Mechahue::Hub.named("hue-lower.culdesac.kobalabs.net")
 
 hubs = [ upper_hub, lower_hub ]
-hubs.each { |hub| hub.start_event_stream }
+hubs.each { |hub| hub.activate }
 
 hubs.each do |hub|
   hub.devices.each do |sensor|

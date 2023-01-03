@@ -60,21 +60,29 @@ module Mechahue::Resource
       @owner ||= native_hub.resolve_reference(info[:owner])
     end
 
-    def received_update(update)
-      self.update(update.info)
-      @last_update = update
-    end
+    def update(new_update)
+      return if @info == new_update.resource_info
 
-    def update(new_info)
-      return if new_info == info
-
-      @info.merge!(new_info) # TODO: find a better merge, this isn't great with nested hashes
+      @info.merge!(new_update.resource_info) # TODO: find a better merge, this isn't great with nested hashes
 
       @watches.each do |watch|
-        watch[:block].call(diff)
+        watch[:block].call(new_update)
       end
 
+      @last_update = new_update
+
       self
+    end
+
+    def update_with_info(info)
+      update_info = {
+        data: [{type: self.class.type, id: self.id}.merge(info)],
+        id: SecureRandom.uuid,
+        type: "update",
+        creationtime: Time.now.to_s,
+      }
+
+      Mechahue::Update.batch_instance(self, [], update_info, update_info[:data].first)
     end
 
     def roll_sequence

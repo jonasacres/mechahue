@@ -3,14 +3,18 @@ module Mechahue::Update
     @updates ||= ObjectSpace.each_object(Class).select { |klass| klass <= Base }
   end
 
-  def self.with_hub_and_info(hub, info)
-    resource = hub.resolve_reference(info[:data].first)
-    self.with_resource_and_info(resource, info)
+  def self.with_hub_and_batch(hub, batch_info)
+    batch = []
+    batch_info[:data].map do |resource_info|
+      resource = hub.resolve_reference(resource_info)
+      self.batch_instance(resource, batch, batch_info, resource_info)
+    end
   end
 
-  def self.with_resource_and_info(resource, info)
+  def self.batch_instance(resource, batch, batch_info, resource_info)
     klass = self.updates.select { |update| resource.class <= update.supported_resource }.min
-    klass.construct(resource, info)
+    batch << klass.construct(resource, batch, batch_info, resource_info)
+    batch.last
   end
 
   class Base
@@ -18,22 +22,33 @@ module Mechahue::Update
       Mechahue::Resource::Base
     end
 
-    def self.construct(resource, info)
-      self.new(resource, info)
+    def self.construct(resource, batch, batch_info, resource_info)
+      self.new(resource, batch, batch_info, resource_info)
     end
 
-    attr_reader :resource, :diff, :info, :old_state, :creation_time, :received_time, :sequence
+    attr_reader :resource, :info, :old_state, :creation_time, :received_time, :sequence, :resource_info
 
-    def initialize(resource, info)
+    def initialize(resource, batch, batch_info, resource_info)
       @resource = resource
+      @resource_info = resource_info
+      @batch = batch
+      @info = batch_info
+
       @sequence = @resource.roll_sequence
-      @diff = HashDiff.diff(resource.info, new_info)
-      @info = JSON.parse(info.to_json, symbolize_names:true)
       @old_state = JSON.parse(@resource.info.to_json, symbolize_names:true)  
       @creation_time = Time.parse(info[:creationtime]) rescue nil
       @received_time = Time.now
 
-      @resource.received_update(self)
+      @resource.update(self)
+    end
+
+    def id
+      info[:id]
+    end
+
+    def to_s
+      "update #{id}: #{@resource}"
     end
   end
 end
+
