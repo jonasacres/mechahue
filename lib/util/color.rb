@@ -29,11 +29,15 @@ module Mechahue
         yy = 0.283881*r + 0.668433*g + 0.047685*b
         zz = 0.000088*r + 0.072310*g + 0.986039*b
 
-        x = xx / (xx + yy + zz)
-        y = yy / (xx + yy + zz)
-        b = 100.0 * yy
-
-        xyb = [x,y,b]
+        xyb = if xx+yy+zz <= 0.0 then
+          [0.0, 0.0, 0.0]
+        else
+          x = xx / (xx + yy + zz)
+          y = yy / (xx + yy + zz)
+          b = 100.0 * yy
+          [x,y,b]
+        end
+        
         from_xyb(xyb)
       end
       
@@ -123,6 +127,8 @@ module Mechahue
       # from https://github.com/benknight/hue-python-rgb-converter/blob/master/rgbxy/__init__.py
 
       x, y, b = xyb
+      return [0.0, 0.0, 0.0] if b <= 0.0 || y <= 0.0
+
       z = 1.0 - x - y
       yy = b / 100.0
       xx = (yy / y) * x

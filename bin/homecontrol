@@ -12,28 +12,24 @@ hubs = [ upper_hub, lower_hub ]
 hubs.each { |hub| hub.activate }
 
 hubs.each do |hub|
-  hub.devices.each do |button|
-    next unless button.is_a?(Button) && button.owner_resource.is_a?(FOHSwitch)
+  hub.devices.each do |device|
+    next unless device.is_a?(FOHSwitch)
 
-    button.watch do |update|
+    device.lower_left.watch do |update|
       button.grouped_lights(update.control_id).each do |group|
-        mutlihub.end_task(group.id)
+        hub.end_task(group.id)
       end
 
-      next unless update.up?
-      if update.lower_left? && button.long_press? then
+      if button.up? && button.long_press? then
         # hub.task defines a new task for a given UUID.
         # tasks are run regularly, every hub.program_tick seconds.
         # if a UUID already has a task, then that task will be removed and the new task will be scheduled.
         button.grouped_lights(update.control_id).each do |group|
-          hub.task(group.id) do
-            period = 4 * 60.0 * 60.0 # 4 hours as seconds
-            radians_per_second = Math::2_PI / period
-            radians_per_tick = radians_per_second * hub.program_tick
+          lights = group.lights
+          rotator = HueRotator.new(lights, 4 * 60.0 * 60.0)
 
-            group.owner.lights.each do |light|
-              light.rotate(radians_per_tick, duration: hub.program_tick)
-            end
+          hub.task(group.id, rotator.update_frequency) do
+            rotator.update
           end
         end
       end
@@ -42,8 +38,9 @@ hubs.each do |hub|
 end
 
 # master bedroom closet switch
-upper_hub.resources["15fda4b4-738c-40c1-b24e-fb1570f159dc"].watch do |update|
-  next unless update.lower_right? && update.long_press_release?
+master_closet_switch = upper_hub.resources["15fda4b4-738c-40c1-b24e-fb1570f159dc"]
+master_closet_switch.lower_right.watch do |update|
+  next unless update.resource.up? && update.resource.long_press?
 
   hubs.each do |hub|
     hub.rooms.each do |room|

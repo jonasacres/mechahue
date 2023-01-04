@@ -46,6 +46,7 @@ module Mechahue
       @default_long_press_threshold = 0.5
       @monitor_interval = 60.0
       @event_watchers = []
+      @tasks = {}
     end
 
     def activate
@@ -71,6 +72,8 @@ module Mechahue
             else
               stale_list.each { |resource| resource.refresh }
             end
+
+            run_tasks
             
             sleep 0.010
           rescue Exception => exc
@@ -329,12 +332,17 @@ module Mechahue
     def rest_request(method, endpoint, payload=nil, headers={}, params={})
       args = {
         rest_args:{},
+        max_retries: 3,
+        retry_delay: 0.100,
       }.merge(params)
       args[:rest_args].merge!(params[:rest_args]) if params[:rest_args].is_a?(Hash)
 
       url = File.join("https://#{hostname}", endpoint)
 
+      attempts = 0
+
       begin
+        attempts += 1
         request_args = {
           method: method,
           url: url,
@@ -346,6 +354,14 @@ module Mechahue
         request_args.delete(:payload) if payload.nil?
 
         resp = RestClient::Request.execute(request_args)
+      rescue RestClient::TooManyRequests => exc
+        if attempts >= args[:max_retries] then
+          raise RequestFailedException.new(url, method, payload, nil, nil,
+            "Server returned #{exc.class}; tried #{attempts} times, #{(1000*args[:retry_delay]).round(0)}ms delay per attempt")
+        end
+
+        sleep args[:retry_delay]
+        retry
       rescue RestClient::RequestFailed => exc
         raise RequestFailedException.new(url, method, payload, nil, nil,
           "Server returned #{exc.class}")
@@ -364,6 +380,27 @@ module Mechahue
       end
 
       return [resp, result]
+    end
+
+    def task(task_id, interval, &block)
+      @tasks[task_id] = { task_id: task_id, next_update: Time.now, interval: interval, block: block }
+    end
+
+    def end_task(task_id)
+      @tasks.delete(task_id)
+    end
+
+    def run_tasks
+      @tasks.values.select { |task| task[:next_update] <= Time.now }
+                   .each do |task|
+                     begin
+                       task[:block].call
+                     rescue Exception => exc
+                       STDERR.puts "Task #{task[:task_id]} encountered exception #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
+                     end
+
+                     task[:next_update] = Time.now + task[:interval]
+                   end
     end
   end
 

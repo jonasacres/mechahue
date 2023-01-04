@@ -8,17 +8,19 @@ module Mechahue::Resource
       new_state = new_update.resource_info[:button][:last_event]
 
       case new_state
-      when "short_release"
-        @is_pressed = false
+      when "short_release", "long_release"
         @hold_duration = @press_start ? Time.now - @press_start : 0.0
-      when "initial_press"
+        @is_pressed = false
+      when "initial_press", "long_press", "repeat"
+        @press_start = Time.now unless @is_pressed
         @is_pressed = true
-        @press_start = Time.now
       end
 
-      puts self
-
       result
+    end
+
+    def control_id
+      @info[:metadata][:control_id]
     end
 
     def stale?
@@ -34,7 +36,7 @@ module Mechahue::Resource
     end
 
     def hold_duration
-      down? ? Time.now - @press_start : @hold_duration
+      down? ? Time.now - @press_start : (@hold_duration || 0.0)
     end
 
     def long_press?

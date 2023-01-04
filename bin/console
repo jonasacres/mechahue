@@ -24,7 +24,10 @@ init
 my_hub = $office_hub
 my_hub.activate
 
-# my_light = my_hub.resources["1b51f4a5-76cc-4d2a-8422-ca452857da15"]
+puts my_hub.resources["69932671-875c-4a02-ad28-303f9b43d34a"].lights
+
+my_light = my_hub.resources["1b51f4a5-76cc-4d2a-8422-ca452857da15"]
+HueRotator.new(my_hub.resources["69932671-875c-4a02-ad28-303f9b43d34a"].lights, 60.0).start
 
 # my_light.set_on(true)
 # my_light.set_color(my_light.mechacolor.rotate_hue(Math::PI/2))
@@ -51,12 +54,13 @@ my_hub.activate
 #   end
 # end
 
-my_group = my_hub.resources["69932671-875c-4a02-ad28-303f9b43d34a"]
-puts my_group.set_color(Mechahue::Color.from_hex("#ffa0a0").rotate_hue(1.0*Math::PI))
-
-my_hub.watch do |update|
-  puts update
+altar_button = my_hub.resources["b40fa01f-d500-43a9-a3f0-27eccd5c949a"]
+altar_button.watch do |event|
+  puts "Altar button: #{altar_button.down? ? "down" : " up "}, #{altar_button.hold_duration.round(3)}s"
 end
 
+# $upper_hub.activate
+# master_closet_switch = $upper_hub.resources["15fda4b4-738c-40c1-b24e-fb1570f159dc"]
+# puts master_closet_switch.lower_right.info
 
 while true ; sleep 5 ; end
