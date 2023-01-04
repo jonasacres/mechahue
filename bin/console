@@ -24,10 +24,7 @@ init
 my_hub = $office_hub
 my_hub.activate
 
-puts my_hub.resources["69932671-875c-4a02-ad28-303f9b43d34a"].lights
-
-my_light = my_hub.resources["1b51f4a5-76cc-4d2a-8422-ca452857da15"]
-HueRotator.new(my_hub.resources["69932671-875c-4a02-ad28-303f9b43d34a"].lights, 60.0).start
+# puts my_hub.resources["69932671-875c-4a02-ad28-303f9b43d34a"].lights
 
 # my_light.set_on(true)
 # my_light.set_color(my_light.mechacolor.rotate_hue(Math::PI/2))
@@ -55,6 +52,8 @@ HueRotator.new(my_hub.resources["69932671-875c-4a02-ad28-303f9b43d34a"].lights, 
 # end
 
 altar_button = my_hub.resources["b40fa01f-d500-43a9-a3f0-27eccd5c949a"]
+puts altar_button.grouped_lights.first.lights
+
 altar_button.watch do |event|
   puts "Altar button: #{altar_button.down? ? "down" : " up "}, #{altar_button.hold_duration.round(3)}s"
 end

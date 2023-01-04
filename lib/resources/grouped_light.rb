@@ -45,11 +45,11 @@ module Mechahue::Resource
     end
 
     def lights
-      self.owner_resource.children.select { |ref|    ref[:rtype] == "device" }
-                                  .map    { |ref|    native_hub.resolve_reference(ref) }
-                                  .map    { |device| device.services.select { |service| service[:rtype] == "light" } }
+      self.owner_resource.children.select { |ref|      ["device", "light"].include?(ref[:rtype]) }
+                                  .map    { |ref|      native_hub.resolve_reference(ref) }
+                                  .map    { |resource| resource.is_a?(Device) ? resource.services.select { |service| service[:rtype] == "light" } : resource }
                                   .flatten
-                                  .map    { |ref|    native_hub.resolve_reference(ref) }
+                                  .map    { |ref|      native_hub.resolve_reference(ref) }
     end
 
     def to_s
