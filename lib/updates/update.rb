@@ -12,9 +12,28 @@ module Mechahue::Update
   end
 
   def self.batch_instance(resource, batch, batch_info, resource_info)
-    klass = self.updates.select { |update| resource.class <= update.supported_resource }.min
+    klass = self.identify_class(resource, batch_info)
     batch << klass.construct(resource, batch, batch_info, resource_info)
     batch.last
+  end
+
+  def self.identify_class(resource, batch_info)
+    case resource
+    when Mechahue::Resource::Button
+      case resource.owner_resource
+      when Mechahue::Resource::Device
+        case resource.owner_resource[:product_data][:model_id]
+        when "FOHSWITCH"
+          FOHSwitchUpdate
+        else
+          Base
+        end
+      else
+        Base
+      end
+    else
+      Base
+    end
   end
 
   class Base

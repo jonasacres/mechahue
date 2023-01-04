@@ -34,7 +34,7 @@ module Mechahue
       end
     end
 
-    attr_reader :hostname, :id, :key, :resources, :default_duration, :default_long_press_threshold
+    attr_reader :hostname, :id, :key, :resources, :default_duration, :default_long_press_threshold, :last_refresh
     attr_accessor :monitor_interval
 
     def initialize(info={})
@@ -65,8 +65,14 @@ module Mechahue
       Thread.new do
         while @monitoring == ts do
           begin
-            refresh
-            sleep @monitor_interval
+            stale_list = @resources.values.select { |res| res.stale? }
+            if Time.now - @last_refresh > @monitor_interval || stale_list.count > 2 then
+              refresh
+            else
+              stale_list.each { |resource| resource.refresh }
+            end
+            
+            sleep 0.010
           rescue Exception => exc
             puts "Hub #{id} monitor thread caught exception: #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
           end
@@ -75,6 +81,7 @@ module Mechahue
     end
 
     def stop_monitor
+      @monitoring = nil
     end
 
     def start_event_stream
@@ -135,7 +142,6 @@ module Mechahue
           end
 
           last_attempt = Time.now
-          puts "Starting event thread"
           RestClient::Request::execute(request_args) rescue nil
         end
       end
@@ -212,6 +218,8 @@ module Mechahue
         @resources[info[:id]] ||= Resource.with_hub_and_info(self, info)
         @resources[info[:id]].update_with_info(info)
       end
+
+      @last_refresh = Time.now
     end
 
     def resolve_reference(info={})
@@ -316,8 +324,6 @@ module Mechahue
 
       url = File.join("https://#{hostname}", endpoint)
 
-      puts "#{method} #{url}"
-
       begin
         request_args = {
           method: method,
@@ -391,6 +397,10 @@ module Mechahue
 
     def cancel
       @cancelled = true
+    end
+
+    def to_s
+      "hub #{hostname}"
     end
   end
 end

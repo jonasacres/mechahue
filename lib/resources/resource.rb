@@ -13,7 +13,7 @@ module Mechahue::Resource
   end
 
   class Base
-    attr_reader :id, :id_v1, :info, :type, :native_hub, :sequence, :last_update
+    attr_reader :id, :id_v1, :info, :type, :native_hub, :sequence, :last_update, :last_updated_at
 
     def self.construct(native_hub, info={})
       self.new(native_hub, info)
@@ -47,7 +47,7 @@ module Mechahue::Resource
     end
 
     def refresh
-      @info.merge!(@native_hub.get(endpoint).first)
+      update_with_info(@native_hub.get_v2(endpoint).first)
       self
     end
 
@@ -70,6 +70,7 @@ module Mechahue::Resource
       end
 
       @last_update = new_update
+      @last_updated_at = new_update.creation_time
 
       self
     end
@@ -114,6 +115,10 @@ module Mechahue::Resource
 
     def delete
       native_hub.delete_v2(endpoint)
+    end
+
+    def stale?
+      false
     end
 
     def to_s

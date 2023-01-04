@@ -12,28 +12,27 @@ hubs = [ upper_hub, lower_hub ]
 hubs.each { |hub| hub.activate }
 
 hubs.each do |hub|
-  hub.devices.each do |sensor|
-    next unless sensor.is_a?(FOHSwitch)
+  hub.devices.each do |button|
+    next unless button.is_a?(Button) && button.owner_resource.is_a?(FOHSwitch)
 
-    switch.watch do |update|
-      switch.grouped_lights(update.control_id).each do |group|
+    button.watch do |update|
+      button.grouped_lights(update.control_id).each do |group|
         mutlihub.end_task(group.id)
       end
 
-      update.on_resolve do |duration|
-        if update.lower_left? && update.long_press? then
-          # hub.task defines a new task for a given UUID.
-          # tasks are run regularly, every hub.program_tick seconds.
-          # if a UUID already has a task, then that task will be removed and the new task will be scheduled.
-          switch.grouped_lights(update.control_id).each do |group|
-            hub.task(group.id) do
-              period = 4 * 60.0 * 60.0 # 4 hours as seconds
-              radians_per_second = Math::2_PI / period
-              radians_per_tick = radians_per_second * hub.program_tick
+      next unless update.up?
+      if update.lower_left? && button.long_press? then
+        # hub.task defines a new task for a given UUID.
+        # tasks are run regularly, every hub.program_tick seconds.
+        # if a UUID already has a task, then that task will be removed and the new task will be scheduled.
+        button.grouped_lights(update.control_id).each do |group|
+          hub.task(group.id) do
+            period = 4 * 60.0 * 60.0 # 4 hours as seconds
+            radians_per_second = Math::2_PI / period
+            radians_per_tick = radians_per_second * hub.program_tick
 
-              group.owner.lights.each do |light|
-                light.rotate(radians_per_tick, duration: hub.program_tick)
-              end
+            group.owner.lights.each do |light|
+              light.rotate(radians_per_tick, duration: hub.program_tick)
             end
           end
         end
