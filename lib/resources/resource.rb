@@ -24,6 +24,7 @@ module Mechahue::Resource
     end
 
     def initialize(native_hub, info={})
+      raise "WHAT THE FUCK MARIE" unless native_hub.is_a?(Mechahue::Hub)
       @native_hub = native_hub
       @info = info
       @watches = []
@@ -46,6 +47,10 @@ module Mechahue::Resource
       @info[:id_v1]
     end
 
+    def info_v1
+      id_v1 ? native_hub.get_v1(id_v1) : nil
+    end
+
     def refresh
       update_with_info(@native_hub.get_v2(endpoint).first)
       self
@@ -63,7 +68,7 @@ module Mechahue::Resource
     def update(new_update)
       return if @info == new_update.resource_info
 
-      @info.merge!(new_update.resource_info) # TODO: find a better merge, this isn't great with nested hashes
+      @info = @info.gentle_merge(new_update.resource_info)
 
       @watches.each do |watch|
         watch[:block].call(new_update)

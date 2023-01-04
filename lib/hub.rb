@@ -232,32 +232,42 @@ module Mechahue
       end
 
       return @resources[id] if @resources[id]
-      @resources[id] = Resource.with_hub_and_info(id: id, type: type)
+      @resources[id] = Resource.with_hub_and_info(self, id: id, type: type)
       @resources[id].refresh
       @resources[id]
     end
 
-    def get_v2(endpoint)
-      request_v2(:get, endpoint)
+    def get_v2(endpoint, params={})
+      request_v2(:get, endpoint, nil, {}, params)
     end
 
-    def post_v2(endpoint, payload)
-      request_v2(:post, endpoint, payload.to_json)
+    def post_v2(endpoint, payload, params={})
+      request_v2(:post, endpoint, payload.to_json, {}, params)
     end
 
-    def put_v2(endpoint, payload)
-      request_v2(:put, endpoint, payload.to_json)
+    def put_v2(endpoint, payload, params={})
+      request_v2(:put, endpoint, payload.to_json, {}, params)
     end
 
-    def delete_v2(endpoint)
-      request_v2(:delete, endpoint)
+    def delete_v2(endpoint, params={})
+      request_v2(:delete, endpoint, nil, {}, params)
     end
 
     def request_v2(method, endpoint, payload=nil, headers={}, params={})
       resp, result = rest_request(method, File.join("/clip/v2", endpoint), payload, { :"hue-application-key" => @key }.merge(headers), params)
 
       unless result[:errors].empty? then
-        raise RequestFailedException.new(url, method, payload, resp, result, "Server response listed errors: #{result[:errors].to_json}")
+        squelch_error = case params[:ignore_errors]
+        when :comm
+          comm_errors_only = result[:errors].reject { |msg| msg[:description].include?("communication issues") }.empty? rescue false
+          comm_errors_only
+        when false, nil
+          false
+        else
+          true
+        end
+
+        raise RequestFailedException.new(endpoint, method, payload, resp, result, "Server response listed errors: #{result[:errors].to_json}") unless squelch_error
       end
 
       result[:data]

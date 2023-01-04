@@ -1,5 +1,9 @@
 module Mechahue::Resource
-  class Light < Base
+  class GroupedLight < Light
+    def self.type
+      "grouped_light"
+    end
+
     def mechacolor
       Mechahue::Color.from_light(info)
     end
@@ -20,13 +24,10 @@ module Mechahue::Resource
       light_command({dimming:{brightness:new_brightness.round(0).to_i}}, params)
     end
 
-    def set_effect(effect, params={})
-      light_command({effects:{effect: effect}}, params)
-    end
-
     def light_command(state, params={})
       args = {
-        duration: native_hub.default_duration
+        duration: native_hub.default_duration,
+        ignore_errors: :comm, # grouped lights throw a bunch of bogus error messages as of 2023-01-04
       }.merge(params)
 
       dynamics = {}
@@ -36,15 +37,17 @@ module Mechahue::Resource
       message = {}
       message[:dynamics] = dynamics unless dynamics.empty?
       message = message.gentle_merge(state)
-      native_hub.put_v2(endpoint, message)
+
+      req_params = { ignore_errors: args[:ignore_errors] }
+
+      native_hub.put_v2(endpoint, message, req_params)
       self
     end
 
     def to_s
       str  = type
       str += " " + id
-      str += " " + mechacolor.to_hex + " " + mechacolor.color_text_bg(" "*3)
-      str += " " + name
+      str += " " + (owner_resource.name || "untitled")
       str += " #{on? ? "on" : "off"}"
     end
   end

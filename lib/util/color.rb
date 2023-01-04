@@ -243,12 +243,19 @@ module Mechahue
       end
     end
 
-    def rotate(radians)
+    def rotate_hue(radians)
       add_hsl([radians, 0, 0])
+    end
+
+    def navigate(radians, distance)
+      delta_x = Math.cos(radians) * distance
+      delta_y = Math.sin(radians) * distance
+      self.class.from_xyb([xyb[0] + delta_x, xyb[1] + delta_y, xyb[2]])
     end
 
     def add_hsl(hsl)
       new_hsl  = to_hsl.zip(hsl).map { |zz| zz.inject(&:+) }
+      new_hsl[0] %= 2*Math::PI
       new_hsl[1] = [0.0, [1.0, new_hsl[1]].min].max
       new_hsl[2] = [0.0, [1.0, new_hsl[2]].min].max
       Color.from_hsl(new_hsl)
@@ -257,6 +264,16 @@ module Mechahue
     def add_mirek(delta)
       new_mirek = [153, [500, to_mirek + delta].min].max.round(0).to_i
       Color.from_mirek(new_mirek)
+    end
+
+    def color_text_fg(text)
+      r, g, b = to_rgb.map { |channel| (255*channel).round }
+      "\x1b[38;2;#{r};#{g};#{b}m" + text + "\x1b[0m"
+    end
+
+    def color_text_bg(text)
+      r, g, b = to_rgb.map { |channel| (255*channel).round }
+      "\x1b[48;2;#{r};#{g};#{b}m" + text + "\x1b[0m"
     end
   end
 end

@@ -21,9 +21,41 @@ end
 time = Time.now
 init
 
-my_hub = $upper_hub
+my_hub = $office_hub
 my_hub.activate
+
+# my_light = my_hub.resources["1b51f4a5-76cc-4d2a-8422-ca452857da15"]
+
+# my_light.set_on(true)
+# my_light.set_color(my_light.mechacolor.rotate_hue(Math::PI/2))
+
+# start_angle = 3*Math::PI/4
+# radius = 0.01
+# period = 5.0
+# anchor_color = my_light.mechacolor.navigate(start_angle, radius)
+
+# start_time = Time.now
+
+# 80.times do |n|
+#   angle = 2*Math::PI/80 * n + Math::PI
+#   new_color = anchor_color.navigate(angle, radius)
+#   print new_color.color_text_bg(" " * 1)
+# end
+# puts
+
+# Thread.new do
+#   loop do
+#     elapsed = Time.now - start_time
+#     angle = 2*Math::PI/period * elapsed + Math::PI
+#     my_light.set_color(anchor_color.navigate(angle, radius))
+#   end
+# end
+
+my_group = my_hub.resources["69932671-875c-4a02-ad28-303f9b43d34a"]
+puts my_group.set_color(Mechahue::Color.from_hex("#ffa0a0").rotate_hue(1.0*Math::PI))
+
 my_hub.watch do |update|
+  puts update
 end
 
 

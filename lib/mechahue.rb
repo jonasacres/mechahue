@@ -5,6 +5,7 @@ dir = File.dirname(__FILE__)
 manual = [
   "hub.rb",
   "resources/resource.rb",
+  "resources/light.rb",
   "updates/update.rb"
 ].map { |p| File.join(dir, p) }
 manual.each { |lib| require lib }
