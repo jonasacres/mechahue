@@ -11,15 +11,15 @@ module Mechahue::Resource
     end
 
     def upper_left
-      @upper_left ||= find_control(0)
+      @upper_left ||= find_control(1)
     end
 
     def lower_left
-      @lower_left ||= find_control(1)
+      @lower_left ||= find_control(2)
     end
 
     def lower_right
-      @lower_right ||= find_control(2)
+      @lower_right ||= find_control(4)
     end
 
     def upper_right

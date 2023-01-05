@@ -23,15 +23,15 @@ module Mechahue::Update
     end
 
     def up?
-      button? && resource_info[:button][:last_update] == "short_release"
+      button? && resource_info[:button][:last_event] == "short_release"
     end
 
     def down?
-      button? && resource_info[:button][:last_update] == "initial_press"
+      button? && resource_info[:button][:last_event] == "initial_press"
     end
 
     def button?
-      resource_info[:button] && resource_info[:button].has_key?(:last_update)
+      resource_info[:button] && resource_info[:button].has_key?(:last_event)
     end
   end
 end

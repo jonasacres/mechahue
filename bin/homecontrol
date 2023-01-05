@@ -1,10 +1,16 @@
-#!/usr/bin/ruby
+#!/usr/bin/env ruby
+
+path = __FILE__
+path = File.readlink(path) while File.symlink?(path)
+basepath = File.expand_path(File.dirname(path) + '/..')
+lib = File.join(basepath, 'lib')
+$LOAD_PATH.unshift(lib) if File.directory?(lib) && !$LOAD_PATH.include?(lib)
 
 require 'mechahue'
+require 'irb'
 include Mechahue
 
-# these should go get my cached hub; if no such cached hub exists, attempt to register
-# if we need to register, do that, and block until the button is pushed but throw an exception for any other error.
+
 upper_hub = Mechahue::Hub.named("hue-upper.culdesac.kobalabs.net")
 lower_hub = Mechahue::Hub.named("hue-lower.culdesac.kobalabs.net")
 
@@ -13,20 +19,30 @@ hubs.each { |hub| hub.activate }
 
 hubs.each do |hub|
   hub.devices.each do |device|
-    next unless device.is_a?(FOHSwitch)
-
-    device.lower_left.watch do |update|
-      button.grouped_lights(update.control_id).each do |group|
-        hub.end_task(group.id)
+    next unless device.is_a?(Mechahue::Resource::FOHSwitch)
+    other_buttons = [device.upper_right, device.upper_left, device.lower_right]
+    other_buttons.each do |button|
+      button.watch do
+        button.grouped_lights.each do |group|
+          puts "Stopping task: #{group.id}"
+          hub.end_task(group.id)
+        end
       end
+    end
+
+    button = device.lower_left
+    
+    button.watch do |update|
+      puts update
+
+      button.grouped_lights.each { |group| hub.end_task(group.id) }
 
       if button.up? && button.long_press? then
-        # hub.task defines a new task for a given UUID.
-        # tasks are run regularly, every hub.program_tick seconds.
-        # if a UUID already has a task, then that task will be removed and the new task will be scheduled.
-        button.grouped_lights(update.control_id).each do |group|
+        button.grouped_lights.each do |group|
+          puts "Rotating group #{group}"
           lights = group.lights
-          rotator = HueRotator.new(lights, 4 * 60.0 * 60.0)
+          puts lights
+          rotator = HueRotator.new(lights, 20 * 60.0)
 
           hub.task(group.id, rotator.update_frequency) do
             rotator.update
@@ -40,15 +56,18 @@ end
 # master bedroom closet switch
 master_closet_switch = upper_hub.resources["15fda4b4-738c-40c1-b24e-fb1570f159dc"]
 master_closet_switch.lower_right.watch do |update|
-  next unless update.resource.up? && update.resource.long_press?
+  next unless update.up? && update.resource.long_press?
+
+  puts "Caught master off"
 
   hubs.each do |hub|
     hub.rooms.each do |room|
-      if scene = room.scene("Bedtime") then
-        scene.recall(duration: 60.0 * 5)
-      else
-        room.grouped_lights.set_on(false, duration: 60.0 * 5)
-      end
+      puts "Turning off #{room}"
+      # if scene = room.scene("Bedtime") then
+      #   scene.recall(duration: 60.0 * 5)
+      # else
+      #   room.grouped_lights.set_on(false, duration: 60.0 * 5)
+      # end
     end
   end
 
@@ -57,3 +76,6 @@ master_closet_switch.lower_right.watch do |update|
   #   - close the garage
 end
 
+loop do
+  sleep 100
+end

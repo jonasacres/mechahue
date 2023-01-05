@@ -41,8 +41,8 @@ module Mechahue::Resource
     end
 
     def to_s
-      str  = type
-      str += " " + id
+      str  = id
+      str += " " + type
       str += " " + mechacolor.to_hex + " " + mechacolor.color_text_bg(" "*3)
       str += " " + name
       str += " #{on? ? "on" : "off"}"

@@ -65,10 +65,21 @@ module Mechahue::Resource
       @owner ||= native_hub.resolve_reference(info[:owner])
     end
 
+    def child_resources
+      return nil unless info[:children]
+      @children ||= info[:children].map { |ref| native_hub.resolve_reference(ref) }
+    end
+
+    def service_resources
+      return nil unless info[:services]
+      @services ||= info[:services].map { |ref| native_hub.resolve_reference(ref) }
+    end
+
     def update(new_update)
       return if @info == new_update.resource_info
 
       @info = @info.gentle_merge(new_update.resource_info)
+      yield if block_given?
 
       @watches.each do |watch|
         watch[:block].call(new_update)
@@ -127,7 +138,7 @@ module Mechahue::Resource
     end
 
     def to_s
-      str = "#{type} #{id}"
+      str = "#{id} #{type}"
       str += " '#{name}'" if name
       str
     end

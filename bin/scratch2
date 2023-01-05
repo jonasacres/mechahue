@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+
+path = __FILE__
+path = File.readlink(path) while File.symlink?(path)
+basepath = File.expand_path(File.dirname(path) + '/..')
+lib = File.join(basepath, 'lib')
+$LOAD_PATH.unshift(lib) if File.directory?(lib) && !$LOAD_PATH.include?(lib)
+
+require 'mechahue'
+require 'irb'
+include Mechahue
+
+def init
+  $upper_hub = Mechahue::Hub.named("hue-upper.culdesac.kobalabs.net")
+  $lower_hub = Mechahue::Hub.named("hue-lower.culdesac.kobalabs.net")
+  $office_hub = Mechahue::Hub.named("hue.kobalabs.net")
+  $hubs = [ $upper_hub, $lower_hub, $office_hub ]
+end
+
+
+time = Time.now
+init
+
+$upper_hub.activate
+$lower_hub.activate
+
+upper_bath = $upper_hub.resources["f95bf65e-c48a-4cd9-8c90-82a2ae3aca44"]
+dimmed = $upper_hub.resources["ed8d08c4-df28-4aae-a4e7-64a960a6462d"]
+deepsea = $upper_hub.resources["0a5e9bd8-d69a-472f-85bd-22bede702725"]
+
+hall_closet_left = $upper_hub.resources["790a4550-0d9f-4ef1-a72a-6bc29b9758ce"]
+button = $upper_hub.resources["aeff0605-78cd-4dd1-a55f-ee6d108af2e1"]
+button.grouped_lights.each do |group|
+  puts "Rotating group #{group}"
+  lights = group.lights
+  rotator = HueRotator.new(lights, 20 * 60.0)
+
+  $upper_hub.task(group.id, rotator.update_frequency) do
+    rotator.update
+  end
+end
+
+loop {}

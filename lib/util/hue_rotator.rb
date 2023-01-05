@@ -5,23 +5,24 @@ module Mechahue
     def initialize(lights, period)
       @lights = lights
       @period = period
-      @update_frequency = if period < 60.0
-        0.100
-      elsif period <=  5*60.0
+      @update_frequency = if period < 5*60.0
+        1.000
+      elsif period <= 10*60.0
         2.000
       elsif period <= 60*60.0
-        10.00
+        5.00
       else
-        30.00
+        10.00
       end
-    end
 
-    def start
       @lights.map { |light| light.native_hub }.uniq.each { |hub| hub.refresh }
       @base_colors = {}
       @lights.each { |light| @base_colors[light] = light.mechacolor }
-      @uuid = uuid = SecureRandom.uuid
       @time_started = Time.now
+    end
+
+    def start
+      @uuid = uuid = SecureRandom.uuid
 
       Thread.new do
         while uuid == @uuid do
@@ -44,12 +45,14 @@ module Mechahue
     end
 
     def angle
-      @time_started ||= Time.now
       elapsed = Time.now - @time_started
       2*Math::PI/@period * elapsed
     end
 
     def update
+      puts angle
+      puts @lights
+
       @lights.each do |light|
         begin
           new_color = @base_colors[light].rotate_hue(angle)
@@ -58,6 +61,8 @@ module Mechahue
           puts "Encountered error rotating light #{light}\n#{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
         end
       end
+
+      puts "updated"
     end
   end
 end
