@@ -1,4 +1,6 @@
 describe Mechahue::Hub do
+  let(:hub) { Mechahue::Hub.new(hostname:"hue.example.com", id:"testcase", key:"testkey") }
+
   describe "::named" do
     context "with a previously registered hostname" do
       it "returns a Mechahue::Hub object" do
@@ -30,9 +32,6 @@ describe Mechahue::Hub do
         tempfile.write(test_info.to_json)
         tempfile.flush
 
-        doubler = class_double("Mechahue::Hub")
-        doubler.
-
         stored = Mechahue::Hub.stored(tempfile.path)
         expect(stored["testhost.example"].hostname).to eq "testhost.example"
         expect(stored["testhost.example"].key).to eq "uzer000"
@@ -42,20 +41,7 @@ describe Mechahue::Hub do
 
     context "given no path" do
       it "returns a hash of hubs from default_authfile_path"
-      # do
-      #   test_info = { "records" => { "testhost.example2" => { "username" => "uzer002", "id" => "testhost-id2", "ip" => "testhost.example2" } } }
-      #   tempfile = Tempfile.new("hub_spec")
-      #   tempfile.write(test_info.to_json)
-      #   tempfile.flush
-
-      #   somehow need to override Hub::default_authfile_path
-
-      #   stored = Mechahue::Hub.stored
-      #   expect(stored["testhost.example2"].hostname).to eq "testhost.example2"
-      #   expect(stored["testhost.example2"].key).to eq "uzer002"
-      #   expect(stored["testhost.example2"].id).to eq "testhost-id2"
-      # end
-      # # alter default_authfile_path to a test file, same test as read from indicated path
+      # alter default_authfile_path to a test file, same test as read from indicated path
     end
 
     it "raises an exception if the path does not exist" do
@@ -67,7 +53,7 @@ describe Mechahue::Hub do
       badfile.write("not json")
       badfile.flush
 
-      expect { Mechahue::Hub.stored(badfile.path) }.to raise_error
+      expect { Mechahue::Hub.stored(badfile.path) }.to raise_error(JSON::ParserError)
     end
   end
 
@@ -251,9 +237,25 @@ describe Mechahue::Hub do
   end
 
   describe "#rest_request" do
-    it "issues a request with the specified method, endpoint, payload and headers"
-    it "returns an array bearing the response object, and parsed JSON"
-    it "raises an exception when the result is not parseable as JSON"
+    it "issues a request with the specified method, endpoint, payload and headers" do
+      stub = stub_request(:put, "https://hue.example.com/foo").to_return(body: {blip:"blorp"}.to_json)
+      resp, result = hub.rest_request(:put, "/foo", "hi there", {"X-Dog" => "Bark"})
+      expect(stub).to have_been_requested
+    end
+
+    it "returns an array bearing the response object, and parsed JSON" do
+      stub_request(:put, "https://hue.example.com/foo")
+        .to_return(body: {blip:"blorp"}.to_json)
+      resp, result = hub.rest_request(:put, "/foo", "hi there", {"X-Dog" => "Bark"})
+      expect(resp).to be_a(RestClient::Response)
+      expect(result).to eq({blip:"blorp"})
+    end
+
+    it "raises RequestFailedException when the result is not parseable as JSON" do
+      stub_request(:put, "https://hue.example.com/foo")
+        .to_return(body: "i'm not json")
+      expect { hub.rest_request(:put, "/foo", "hi there", {"X-Dog" => "Bark"}) }.to raise_error(Mechahue::RequestFailedException)
+    end
 
     context "when HTTP 429 encountered" do
       it "retries the request a finite number of times"

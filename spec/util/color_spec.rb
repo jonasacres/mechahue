@@ -720,12 +720,14 @@ describe Mechahue::Color do
     end
   end
 
-  it "can make lots of conversions between colors without severely distorting the color" do
+  it "can make lots of conversions between colors without unexpected distortions" do
     original_color = Mechahue::Color.from_hex("#9f5ca3")
     modified = Mechahue::Color.from_hsl(original_color.to_hsl)
-    modified = modified.navigate(Math::PI/4, 0.12)
-    modified = modified.add_hsl([0, 0, 0.2])
-    modified = modified.add_hsl([0, 0, -0.2])
+    modified = modified.navigate(Math::PI/4, 0.06)
+    modified = modified.navigate(Math::PI/4, 0.06)
+    modified = modified.add_hsl([3.2, 0.2, 0.2])
+    modified = modified.add_hsl([-2.1, -0.3, -0.1])
+    modified = modified.add_hsl([-1.1, 0.1, -0.1])
     modified = modified.navigate(Math::PI, 2**0.5 * 0.12)
     6.times { modified = modified.rotate_hue(Math::PI/3) }
     modified = modified.navigate(7*Math::PI/4, 0.12)
