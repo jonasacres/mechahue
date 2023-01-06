@@ -1,35 +1,30 @@
 module Mechahue
   class Hub
-    def self.named(hostname)
+    def self.named(hostname, authfile=nil)
       # TODO: try to register if we don't have this hub yet. block on wait for link button, raise exception on all other errors.
-      stored[hostname]
+      stored(authfile)[hostname]
     end
 
     def self.default_authfile_path
       File.expand_path("~/hue-auth")
     end
 
-    def self.stored(authfile=nil)
-      return @stored_hubs if @stored_hubs
+    def self.load_authfile(authfile=nil)
       authfile ||= default_authfile_path
-      return {} unless File.exists?(authfile)
+      hub_info = {}
 
+      JSON.parse(IO.read(authfile), symbolize_names:true)[:records]
+          .transform_values { |hub_info| Hub.new(hub_info) }
+          .transform_keys { |hostname| hostname.to_s }
+    end
+
+    def self.stored(authfile=nil)
+      @stored_hubs ||= {}
+      authfile ||= default_authfile_path
 
       begin
-        hubs = JSON.parse(IO.read(authfile), symbolize_names:true)[:records].values.map do |hub_info|
-          Hub.new(hub_info)
-        end
-
-        @stored_hubs = {}
-        hubs.each do |hub|
-          @stored_hubs[hub.hostname] = hub
-        end
-        @stored_hubs
-      rescue JSON::ParserError => exc
-        STDERR.puts "Can't read authfile: unparseable JSON, #{exc}"
-        {}
-      rescue Exception => exc
-        STDERR.puts "Error instantiating hubs: #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}" if File.exists?(authfile)
+        @stored_hubs[authfile] ||= load_authfile(authfile)
+      rescue Errno::ENOENT
         {}
       end
     end
@@ -60,109 +55,8 @@ module Mechahue
       stop_monitor
     end
 
-    def start_monitor
-      ts = Time.now
-      @monitoring = ts
-      Thread.new do
-        while @monitoring == ts do
-          begin
-            stale_list = @resources.values.select { |res| res.stale? }
-            if Time.now - @last_refresh > @monitor_interval || stale_list.count > 2 then
-              refresh
-            else
-              stale_list.each { |resource| resource.refresh }
-            end
-
-            run_tasks
-            
-            sleep 0.010
-          rescue Exception => exc
-            puts "Hub #{id} monitor thread caught exception: #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
-          end
-        end
-      end
-    end
-
-    def stop_monitor
-      @monitoring = nil
-    end
-
-    def start_event_stream
-      start_time = Time.now
-      @event_stream_start = start_time
-
-      chunk_handler = proc do |response|
-        next unless @event_stream_start == start_time
-
-        pending = ""
-        response.read_body do |chunk|
-          pending += chunk
-          lines = pending.split("\n")
-          
-          if pending.end_with?("\n") then
-            pending = ""
-          else
-            pending = lines.last
-            lines = lines[0..-2]
-          end
-
-
-          lines.each do |line|
-            next unless line.start_with?("data: ")
-            data = line["data: ".length .. -1]
-
-            messages = JSON.parse(data, symbolize_names:true) rescue []
-            messages.each do |msg|
-              begin
-                case msg[:type]
-                when "update"
-                  updates = Mechahue::Update.with_hub_and_batch(self, msg)
-                  updates.each { |update| notify_event(:update, update) }
-                end
-              rescue Exception => exc
-                puts "Exception #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
-              end
-            end
-          end
-        end
-      end
-
-      request_args = {
-        method: :get,
-        url: "https://#{hostname}/eventstream/clip/v2",
-        verify_ssl: OpenSSL::SSL::VERIFY_NONE,
-        headers: {:"hue-application-key" => @key, :"Accept" => "text/event-stream"},
-        block_response: chunk_handler,
-        read_timeout: 60*60*24*365.24*100,
-      }
-
-      Thread.new do
-        last_attempt = nil
-        
-        while @event_stream_start == start_time do
-          if last_attempt && Time.now - last_attempt < 5.0 then
-            sleep 5.0 - (Time.now - last_attempt)
-          end
-
-          last_attempt = Time.now
-          RestClient::Request::execute(request_args) rescue nil
-        end
-      end
-
-      self
-    end
-
-    def notify_event(type, event)
-      @event_watchers.select! { |watcher| watcher.notify(type, event) }
-    end
-
     def watch(types=nil, &block)
       @event_watchers << EventWatcher.new(types, &block)
-      self
-    end
-
-    def stop_event_stream
-      @event_stream_start = nil
       self
     end
 
@@ -194,10 +88,6 @@ module Mechahue
 
     def grouped_lights
       find(type: "grouped_light")
-    end
-
-    def devices
-      find(type: "device")
     end
 
     def bridges
@@ -294,39 +184,10 @@ module Mechahue
 
     def request_v1(method, endpoint, payload=nil, headers={}, params={})
       args = {
-        squish_single:true,
       }.merge(params)
 
       resp, result = rest_request(method, File.join("/api/#{@key}", endpoint), payload, headers, args)
-      retval = if result.is_a?(Array) then
-        result.each do |item|
-          unless item.is_a?(Hash) then
-            raise RequestFailedException.new(url, method, payload, resp, result,
-              "Expected second-level JSON responses to be objects")
-          end
-
-          if item.has_key?(:error) then
-            raise RequestFailedException.new(url, method, payload, resp, result,
-              "JSON response contained error: #{item[:error][:description]}")
-          end
-
-          unless item.has_key?(:success) then
-            raise RequestFailedException.new(url, method, payload, resp, result,
-              "JSON response did not contain successful response")
-          end
-        end
-        
-        reduced = result.map do |item|
-          item[:success]
-        end
-
-        reduced = reduced.first if reduced.length == 1 && args[:squish_single]
-        reduced
-      else
-        result
-      end
-
-      return retval
+      return result
     end
 
     def rest_request(method, endpoint, payload=nil, headers={}, params={})
@@ -384,10 +245,117 @@ module Mechahue
 
     def task(task_id, interval, &block)
       @tasks[task_id] = { task_id: task_id, next_update: Time.now, interval: interval, block: block }
+      self
     end
 
     def end_task(task_id)
       @tasks.delete(task_id)
+      self
+    end
+
+
+    private
+
+
+    def notify_event(type, event)
+      @event_watchers.select! { |watcher| watcher.notify(type, event) }
+    end
+
+    def start_monitor
+      ts = Time.now
+      @monitoring = ts
+      Thread.new do
+        while @monitoring == ts do
+          begin
+            stale_list = @resources.values.select { |res| res.stale? }
+            if Time.now - @last_refresh > @monitor_interval || stale_list.count > 2 then
+              refresh
+            else
+              stale_list.each { |resource| resource.refresh }
+            end
+
+            run_tasks
+            
+            sleep 0.010
+          rescue Exception => exc
+            puts "Hub #{id} monitor thread caught exception: #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
+          end
+        end
+      end
+    end
+
+    def stop_monitor
+      @monitoring = nil
+    end
+
+    def start_event_stream
+      start_time = Time.now
+      @event_stream_start = start_time
+
+      chunk_handler = proc do |response|
+        next unless @event_stream_start == start_time
+
+        pending = ""
+        response.read_body do |chunk|
+          pending += chunk
+          lines = pending.split("\n")
+          
+          if pending.end_with?("\n") then
+            pending = ""
+          else
+            pending = lines.last
+            lines = lines[0..-2]
+          end
+
+
+          lines.each do |line|
+            next unless line.start_with?("data: ")
+            data = line["data: ".length .. -1]
+
+            messages = JSON.parse(data, symbolize_names:true) rescue []
+            messages.each do |msg|
+              begin
+                case msg[:type]
+                when "update"
+                  updates = Mechahue::Update.with_hub_and_batch(self, msg)
+                  updates.each { |update| notify_event(:update, update) }
+                end
+              rescue Exception => exc
+                puts "Exception #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
+              end
+            end
+          end
+        end
+      end
+
+      request_args = {
+        method: :get,
+        url: "https://#{hostname}/eventstream/clip/v2",
+        verify_ssl: OpenSSL::SSL::VERIFY_NONE,
+        headers: {:"hue-application-key" => @key, :"Accept" => "text/event-stream"},
+        block_response: chunk_handler,
+        read_timeout: 60*60*24*365.24*100,
+      }
+
+      Thread.new do
+        last_attempt = nil
+        
+        while @event_stream_start == start_time do
+          if last_attempt && Time.now - last_attempt < 5.0 then
+            sleep 5.0 - (Time.now - last_attempt)
+          end
+
+          last_attempt = Time.now
+          RestClient::Request::execute(request_args) rescue nil
+        end
+      end
+
+      self
+    end
+
+    def stop_event_stream
+      @event_stream_start = nil
+      self
     end
 
     def run_tasks
@@ -430,7 +398,12 @@ module Mechahue
     end
 
     def notify(type, event)
-      block.call(event) unless @cancelled || !wants?(type)
+      begin
+        block.call(event) unless @cancelled || !wants?(type)
+      rescue Exception => exc
+        STDERR.puts "EventWatcher block #{block} encountered exception: #{exc.class} #{exc}\n#{exc.backtrace.join("\n")}"
+      end
+
       !@cancelled
     end
 

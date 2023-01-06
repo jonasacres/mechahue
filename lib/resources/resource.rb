@@ -24,7 +24,6 @@ module Mechahue::Resource
     end
 
     def initialize(native_hub, info={})
-      raise "WHAT THE FUCK MARIE" unless native_hub.is_a?(Mechahue::Hub)
       @native_hub = native_hub
       @info = info
       @watches = []

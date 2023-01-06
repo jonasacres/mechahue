@@ -135,23 +135,17 @@ module Mechahue
       zz = (yy / y) * z
 
       # sRGB D65 conversion
-      r =  1.656492 * xx - 0.354851 * yy - 0.255038 * zz
-      g = -0.707196 * xx + 1.655397 * yy + 0.036152 * zz
-      b =  0.051713 * xx - 0.121364 * yy + 1.011530 * zz
+      r =  1.65649364674089370 * xx - 0.35485223161269680 * yy - 0.255037806749714800 * zz
+      g = -0.70719583368816350 * xx + 1.65539866780113630 * yy + 0.036152567055388864 * zz
+      b =  0.05171353191210277 * xx - 0.12136502782579414 * yy + 1.011530224669834300 * zz
       r, g, b = rescale_rgb([r,g,b])
 
       # gamma correction
       r =   r <= 0.0031308   ?   12.92 * r   :   1.055 * r**(1/2.4) - 0.055
       g =   g <= 0.0031308   ?   12.92 * g   :   1.055 * g**(1/2.4) - 0.055
       b =   b <= 0.0031308   ?   12.92 * b   :   1.055 * b**(1/2.4) - 0.055
-      rescale_rgb([r,g,b])
-    end
 
-    def rescale_rgb(rgb)
-      rgb = rgb.map { |v| [0.0, v].max }
-      max = rgb.max
-      return rgb unless max > 1.0
-      rgb.map { |v| v / max }
+      rescale_rgb([r,g,b])
     end
 
     def to_hsl
@@ -178,7 +172,7 @@ module Mechahue
         pi_over_3 * ( (rgb[0] - rgb[1] ) / delta + 4 )
       end
 
-      [ hue, sat, lum ]
+      [ hue, sat, lum ].map { |v| [0.0, [1.0, v].min].max }
     end
 
     def to_mirek
@@ -214,11 +208,6 @@ module Mechahue
       "#" + to_rgb.map { |component| sprintf("%02x", (255 * component).round(0).to_i) }.join("")
     end
 
-    def to_device_xy
-      x, y = to_xy
-      { xy: { x: x, y: y } }
-    end
-
     def brightness
       xyb[2]
     end
@@ -227,26 +216,6 @@ module Mechahue
       # to_mirek needs to interpolate for this to return true for mirek values not on the table
       nearest_white = self.class.from_mb(self.to_mb)
       self.xy_distance(nearest_white) < 1e-3
-    end
-
-    def xy_distance(other)
-      ((self.xyb[0] - other.xyb[0])**2 + (self.xyb[1] - other.xyb[1])**2)**0.5
-    end
-
-    def blend(other_color, params={})
-      args = { method: white? ? :mirek : :rgb, alpha: 0.5 }.merge(params)
-      case args[:method]
-      when :mirek
-        self.class.from_mb(self.mb.zip(other.mb).map { |pair| (1.0-alpha)*pair[0] + alpha*pair[1]})
-      when :rgb
-        self.class.from_rgb(self.rgb.zip(other.rgb).map { |pair| (1.0-alpha)*pair[0] + alpha*pair[1]})
-      when :hsv
-        self.class.from_hsv(self.hsv.zip(other.hsv).map { |pair| (1.0-alpha)*pair[0] + alpha*pair[1]})
-      when :xyb
-        self.class.from_xyb(self.hsv.zip(other.xyb).map { |pair| (1.0-alpha)*pair[0] + alpha*pair[1]})
-      else
-        raise "Unsupported blend method: #{args[:method]}"
-      end
     end
 
     def rotate_hue(radians)
@@ -280,6 +249,21 @@ module Mechahue
     def color_text_bg(text)
       r, g, b = to_rgb.map { |channel| (255*channel).round }
       "\x1b[48;2;#{r};#{g};#{b}m" + text + "\x1b[0m"
+    end
+
+
+    private
+
+
+    def xy_distance(other)
+      ((self.xyb[0] - other.xyb[0])**2 + (self.xyb[1] - other.xyb[1])**2)**0.5
+    end
+
+    def rescale_rgb(rgb)
+      rgb = rgb.map { |v| [0.0, v].max }
+      max = rgb.max
+      return rgb unless max > 1.0
+      rgb.map { |v| v / max }
     end
   end
 end
