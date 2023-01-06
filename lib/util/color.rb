@@ -172,7 +172,10 @@ module Mechahue
         pi_over_3 * ( (rgb[0] - rgb[1] ) / delta + 4 )
       end
 
-      [ hue, sat, lum ].map { |v| [0.0, [1.0, v].min].max }
+      hue %= 2*Math::PI
+      sat  = [0.0, [1.0, sat].min].max
+      lum  = [0.0, [1.0, lum].min].max
+      [ hue, sat, lum ]
     end
 
     def to_mirek
@@ -238,7 +241,7 @@ module Mechahue
 
     def add_mirek(delta)
       new_mirek = [153, [500, to_mirek + delta].min].max.round(0).to_i
-      Color.from_mirek(new_mirek)
+      Color.from_mb([new_mirek, brightness])
     end
 
     def color_text_fg(text)
