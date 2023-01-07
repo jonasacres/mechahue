@@ -149,7 +149,11 @@ module Mechahue
     def request_v2(method, endpoint, payload=nil, headers={}, params={})
       resp, result = rest_request(method, File.join("/clip/v2", endpoint), payload, { :"hue-application-key" => @key }.merge(headers), params)
 
-      unless result[:errors].empty? then
+      unless result.is_a?(Hash) then
+        raise RequestFailedException.new(endpoint, method, payload, resp, result, "Server response did not contain appropriate top-level object")
+      end
+
+      unless result[:errors].nil? || (result[:errors].is_a?(Array) && result[:errors].empty?) then
         squelch_error = case params[:ignore_errors]
         when :comm
           comm_errors_only = result[:errors].reject { |msg| msg[:description].include?("communication issues") }.empty? rescue false
@@ -161,6 +165,10 @@ module Mechahue
         end
 
         raise RequestFailedException.new(endpoint, method, payload, resp, result, "Server response listed errors: #{result[:errors].to_json}") unless squelch_error
+      end
+
+      unless result[:data].is_a?(Array) then
+        raise RequestFailedException.new(endpoint, method, payload, resp, result, "Server response did not contain data array")
       end
 
       result[:data]
@@ -178,7 +186,7 @@ module Mechahue
       request_v1(:put, endpoint, payload.to_json)
     end
 
-    def delete_v1(endpoint, payload)
+    def delete_v1(endpoint)
       request_v1(:delete, endpoint)
     end
 
@@ -193,8 +201,8 @@ module Mechahue
     def rest_request(method, endpoint, payload=nil, headers={}, params={})
       args = {
         rest_args:{},
-        max_retries: 3,
-        retry_delay: 0.100,
+        max_retries: 5,
+        retry_delay: 0.250,
       }.merge(params)
       args[:rest_args].merge!(params[:rest_args]) if params[:rest_args].is_a?(Hash)
 
