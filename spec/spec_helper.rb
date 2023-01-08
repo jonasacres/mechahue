@@ -99,4 +99,4 @@ RSpec.configure do |config|
 =end
 end
 
-require '../lib/mechahue'
+require_relative '../lib/mechahue'
