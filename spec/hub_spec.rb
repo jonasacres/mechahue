@@ -174,6 +174,36 @@ def make_v2_result(list)
   { errors:[], data:list }
 end
 
+def make_v1_rule(sensor_id=nil, params={})
+  sensor_id ||= Math.rand(100) # not deterministic, might want to rewrite this
+
+  {
+    name: "Example Rule",
+    owner: SecureRandom.uuid, # might want this to correspond to resource tree
+    created: "2023-01-01T00:00:00",
+    lasttriggered: "2023-02-01T12:34:56",
+    timestriggered: 1,
+    status: "enabled",
+    recycle: true,
+    conditions: [
+      { address: "/sensors/#{sensor_id}/state/buttonevent", operator: "eq", value: 22 },
+      { address: "/sensors/#{sensor_id}/state/lastupdated", operator: "dx" },
+    ],
+    actions: [
+      { address: "/groups/2/action", method: "PUT", body: { on: false } }
+    ],
+  }
+end
+
+def make_v1_ruleset(params={})
+  rules = {}
+  10.times.map do |n|
+    rules[n.to_s.to_sym] = make_v1_rule(n+10)
+  end
+
+  rules
+end
+
 describe Mechahue::Hub do
   let(:hub) { Mechahue::Hub.new(hostname:"hue.example.com", id:"testcase", application_key:"testkey") }
   let(:resources) { make_resource_tree }
@@ -184,9 +214,34 @@ describe Mechahue::Hub do
   let(:rooms)   { resources.select { |resource| resource[:type] == "room" } }
   let(:zones)   { resources.select { |resource| resource[:type] == "zone" } }
   let(:scenes)  { resources.select { |resource| resource[:type] == "scene" } }
+  let(:rules)   { make_v1_ruleset }
 
-  def stub_v2_get_resources
-    stub_request(:get, "https://#{hub.hostname}/clip/v2/resource").to_return(body:make_v2_result(resources).to_json)
+  def stub_v2_event_stream
+    stub_request(:get, "https://#{hub.hostname}/eventstream/clip/v2").to_return do |request|
+      { body: ": hi\n\ndata: #{updates.to_json}\n\n" }
+    end
+  end
+
+  def stub_v2_get_all_resources
+    stub_request(:get, "https://#{hub.hostname}/clip/v2/resource").to_return { {body:make_v2_result(resources).to_json} }
+  end
+
+  def stub_v2_get_individual_resources
+    resources.each do |resource|
+      url = "https://#{hub.hostname}/clip/v2/resource/#{resource[:type]}/#{resource[:id]}"
+      stub_request(:get, url).to_return { {body:make_v2_result([resource]).to_json } }
+    end
+  end
+
+  def stub_v1_rules
+    stub_request(:get, "https://#{hub.hostname}/api/#{hub.key}/rules").to_return { {body: rules.to_json } }
+  end
+
+  def stub_everything
+    stub_v2_event_stream
+    stub_v2_get_all_resources
+    stub_v2_get_individual_resources
+    stub_v1_rules
   end
 
   describe "::named" do
@@ -252,11 +307,7 @@ describe Mechahue::Hub do
         ] }
 
     before(:each) do
-      stub_request(:get, "https://#{hub.hostname}/eventstream/clip/v2").to_return do |request|
-        { body: ": hi\n\ndata: #{updates.to_json}\n\n" }
-      end
-
-      stub_v2_get_resources
+      stub_everything
     end
 
     after(:each) do
@@ -264,7 +315,7 @@ describe Mechahue::Hub do
     end
 
     def wait_for_event_stream
-      sleep 0.1 # TODO: lol, make this work for real
+      sleep 0.1 # TODO: lol, make this work for real, we want to wait until we're sure the hub has processed our mock event stream
     end
 
     it "opens a connection to the event stream" do
@@ -359,7 +410,7 @@ describe Mechahue::Hub do
 
   describe "#find" do
     before(:each) do
-      stub_v2_get_resources
+      stub_v2_get_all_resources
       hub.refresh
     end
 
@@ -408,7 +459,7 @@ describe Mechahue::Hub do
   end
 
   context do
-    before(:each) { stub_v2_get_resources }
+    before(:each) { stub_v2_get_all_resources }
 
     context do
       before(:each) { hub.refresh }
@@ -460,8 +511,18 @@ describe Mechahue::Hub do
     end
     
     describe "#rules_v1" do
-      it "makes a V1 API request for rule objects"
-      it "returns a Hash of API V1 rule objects"
+      before(:each) { stub_v1_rules }
+
+      it "makes a V1 API request for rule objects" do
+        hub.rules_v1
+        expect(a_request(:get, "https://#{hub.hostname}/api/#{hub.key}/rules")).to have_been_made
+      end
+
+      it "returns a Hash of API V1 rule objects" do
+        result = hub.rules_v1
+
+        expect(result).to eq hub.rules_v1
+      end
     end
     
     describe "#refresh" do
@@ -472,9 +533,13 @@ describe Mechahue::Hub do
         expect(stub).to have_been_requested
       end
 
-      it "updates the info of all existing resources"
-      it "blocks until the update is complete"
-      
+      it "updates the info of all existing resources" do
+        hub.refresh
+        resources.each { |res| res[:testkey] = "testvalue" }
+        hub.refresh
+        hub.resources.values.each { |res| expect(res[:testkey]).to eq "testvalue" }
+      end
+
       it "instantiates new resource objects for resources that were not previously known" do
         expect(hub.resources).to be_empty
         hub.refresh
@@ -492,7 +557,7 @@ describe Mechahue::Hub do
 
     describe "#resolve_reference" do
       before(:each) do
-        stub_v2_get_resources
+        stub_v2_get_all_resources
         hub.refresh
       end
 
@@ -882,12 +947,62 @@ describe Mechahue::Hub do
     end
 
     context "when Hub is active" do
-      it "causes the block to be invoked at the requested interval"
+      before(:each) do
+        stub_everything
+        hub.activate
+
+        while(hub.resources.empty?) do
+          # busywait until we see the synchronous update, fixes a race condition where the sync request hits after the test case ends, which upsets webmock
+        end
+      end
+
+      after(:each) do
+        hub.deactivate
+      end
+
+      it "causes the block to be invoked at the requested interval" do
+        margin = 0.020
+        delay  = 0.020
+
+        timestamps = []
+        count = 5
+        
+        hub.task(:foo, delay) { timestamps << Time.now }
+        sleep count*(delay+margin)
+
+        expect(timestamps.count).to be >= count
+
+        (count-1).times
+                 .map { |n| timestamps[n+1] - timestamps[n] }
+                 .each { |delta| expect(delta).to be >= delay }
+      end
     end
 
     context "when Hub is not active" do
-      it "does not cause the block to be invoked while the Hub remains inactive"
-      it "causes the block to be invoked at the requested interval when the Hub is made active"
+      after(:each) { hub.deactivate }
+      
+      it "does not cause the block to be invoked while the Hub remains inactive" do
+        hit = false
+        hub.task(:foo, 0.001) { hit = true }
+        
+        sleep 0.050
+        expect(hit).to be false
+      end
+
+      it "causes the block to be invoked at the requested interval when the Hub is made active" do
+        hit = false
+        hub.task(:foo, 0.001) { hit = true }
+
+        stub_everything
+        hub.activate
+
+        while(hub.resources.empty?) do
+          # busywait until we see the synchronous update, fixes a race condition where the sync request hits after the test case ends, which upsets webmock
+        end
+
+        sleep 0.050
+        expect(hit).to be true
+      end
     end
   end
 
