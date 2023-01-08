@@ -1,5 +1,7 @@
 require 'securerandom'
 
+NUM_THINGS = 5
+
 def make_id
   SecureRandom.uuid
 end
@@ -116,7 +118,7 @@ def make_zigbee_connectivity(params={})
 end
 
 def make_zone(params={})
-  make_basic("room").merge({
+  make_basic("zone").merge({
     children: 3.times.map { make_reference("device") },
     services: 3.times.map { make_reference("light") },
     metadata: {
@@ -126,20 +128,6 @@ def make_zone(params={})
   }).merge(params)
 end
 
-def make_resource_tree
-  light_devices = 5.times.map do |n|
-    make_device
-  end
-
-  light_devices.each do |device|
-    my_ref = make_reference_from_resource(device)
-    light_service = make_light(owner: my_ref)
-    zigbee_service = make_zigbee_connectivity(owner: my_ref)
-  end
-
-  # TODO: work in progress
-end
-
 def make_reference_from_resource(resource)
   {
     rid: resource[:id],
@@ -147,15 +135,63 @@ def make_reference_from_resource(resource)
   }
 end
 
+def make_resource_tree
+  rooms = NUM_THINGS.times.map { |n| make_room }
+  zones = NUM_THINGS.times.map { |n| make_zone }
+
+  light_devices   = NUM_THINGS.times.map { |n| make_device }
+  button_devices  = NUM_THINGS.times.map { |n| make_device }
+  switch_devices  = NUM_THINGS.times.map { |n| make_device }
+
+  light_services  = light_devices.map { |dev| make_light(owner: make_reference_from_resource(dev))  }
+  zigbee_services = light_devices.map { |dev| make_zigbee_connectivity(owner: make_reference_from_resource(dev))  }
+  button_services = button_devices.map { |dev| make_button(owner: make_reference_from_resource(dev)) }
+  switch_services = switch_devices.map { |dev| 4.times.map { |n| make_button(owner: make_reference_from_resource(dev), metadata:{control_id:n}) } }.flatten
+  grouped_lights  = NUM_THINGS.times.map { |n| make_grouped_light(owner:make_reference_from_resource(rooms[n])) }
+  grouped_lights += NUM_THINGS.times.map { |n| make_grouped_light(owner:make_reference_from_resource(zones[n])) }
+
+  scenes = rooms.map { |room| make_scene(group: make_reference_from_resource(room)) }
+
+  NUM_THINGS.times.each do |n|
+    light_devices[n][:services] = [ light_services[n], zigbee_services[n] ]
+    button_devices[n][:services] = [ button_services[n] ]
+    switch_devices[n][:services] = [ switch_services[4*n ... 4*(n+1)].flatten ]
+    
+    rooms[n][:devices] = [ make_reference_from_resource(light_devices[n]) ]
+    rooms[n][:services] = [ light_devices[n][:services], grouped_lights[n] ].flatten
+
+    zones[n][:devices] = [ make_reference_from_resource(light_devices[n]) ]
+    zones[n][:services] = [ light_devices[n][:services], grouped_lights[5+n] ].flatten
+  end
+
+  resources_with_services = light_devices + button_devices + switch_devices + rooms + zones
+  services = resources_with_services.map { |res| res[:services] }.flatten.uniq
+
+  resources_with_services + services + scenes
+end
+
+def make_v2_result(list)
+  { errors:[], data:list }
+end
+
 describe Mechahue::Hub do
   let(:hub) { Mechahue::Hub.new(hostname:"hue.example.com", id:"testcase", application_key:"testkey") }
+  let(:resources) { make_resource_tree }
+  let(:buttons) { resources.select { |resource| resource[:type] == "button" } }
+  let(:devices) { resources.select { |resource| resource[:type] == "device" } }
+  let(:grouped_lights) { resources.select { |resource| resource[:type] == "grouped_light" } }
+  let(:lights)  { resources.select { |resource| resource[:type] == "light" } }
+  let(:rooms)   { resources.select { |resource| resource[:type] == "room" } }
+  let(:zones)   { resources.select { |resource| resource[:type] == "zone" } }
+  let(:scenes)  { resources.select { |resource| resource[:type] == "scene" } }
+
+  def stub_v2_get_resources
+    stub_request(:get, "https://#{hub.hostname}/clip/v2/resource").to_return(body:make_v2_result(resources).to_json)
+  end
 
   describe "::named" do
     context "with a previously registered hostname" do
-      it "returns a Mechahue::Hub object" do
-        # TODO: make this more generic and not dependent on my local setup!
-        expect(Mechahue::Hub.named("hue.kobalabs.net")).to be_a(Mechahue::Hub)
-      end
+      it "returns a Mechahue::Hub object"
     end
 
     context "with a previously unknown hostname" do
@@ -206,6 +242,7 @@ describe Mechahue::Hub do
 
   describe "#activate" do
     it "opens a connection to the event stream"
+    it "causes incoming events to be delivered to watchers"
     it "makes periodic synchronous queries in the background to maintain state"
     it "makes an immediate blocking synchronous query to establish state"
     it "begins processing scheduled tasks"
@@ -219,106 +256,243 @@ describe Mechahue::Hub do
   end
 
   describe "#watch" do
-    it "causes Hub to invoke the block when a new event arrives in the event stream"
-    it "supports multiple watch callbacks"
+    context "when given a type list" do
+      it "causes Hub to invoke the block when a new event of any specified type arrives in the event stream" do
+        saw_event = nil
+        my_event = {"gee" => "whiz"}
+        hub.watch([:somekey1, :somekey2, :somekey3]) { |event| saw_event = event }
+        hub.send(:notify_event, :somekey2, my_event)
+
+        expect(saw_event).to be my_event
+      end
+
+      it "does not causes Hub to invoke the block when a new event not of any specified type arrives in the event stream" do
+        saw_event = nil
+        my_event = {"gee" => "whiz"}
+        hub.watch([:somekey1, :somekey2, :somekey3]) { |event| saw_event = event }
+        hub.send(:notify_event, :someotherkey, my_event)
+
+        expect(saw_event).to be_nil
+      end
+    end
+
+    context "when type list omitted" do
+      it "causes Hub to invoke the block when a new event arrives in the event stream" do
+        saw_event = nil
+        my_event = {"gee" => "whiz"}
+        hub.watch { |event| saw_event = event }
+        hub.send(:notify_event, :somekey, my_event)
+
+        expect(saw_event).to be my_event
+      end
+    end
+
+    it "supports multiple watch callbacks" do
+      saw_event_a, saw_event_b = nil
+      my_event = {"gee" => "whiz"}
+      hub.watch { |event| saw_event_a = event }
+      hub.watch { |event| saw_event_b = event }
+      hub.send(:notify_event, :somekey, my_event)
+
+      expect(saw_event_a).to be my_event
+      expect(saw_event_b).to be my_event
+    end
   end
 
   describe "#find" do
-    it "returns a list of resources including all toplevel key-value pairs matching the supplied parameters"
-    it "does not include any resources whose top-level key-value paris differ from supplied parameters"
+    before(:each) do
+      stub_v2_get_resources
+      hub.refresh
+    end
+
+    it "returns a list of resources including all toplevel key-value pairs matching the supplied parameters" do
+      results = hub.find(type: "room")
+      expect(results.count).to eq NUM_THINGS
+      resources.select { |res| res[:type] == "room" }.each do |room|
+        expect(results.select { |res| res[:id] == room[:id] }.count).to eq 1
+      end
+    end
+
+    it "does not include any resources whose top-level key-value paris differ from supplied parameters" do
+      results = hub.find(type: "room")
+      results.each do |res|
+        expect(res[:type]).to eq "room"
+      end
+    end
 
     context "given a block" do
-      it "invokes the block for each parameter-matching resource"
-      it "does not invoke the block for any non-parameter-matching resource"
-      it "returns a list consisting of all the resources for which the block returned truthy"
-      it "returns a list containing no resources for which the block returned falsy"
+      it "invokes the block for each parameter-matching resource" do
+        seen_ids = []
+        hub.find(type: "room") { |res| seen_ids << res[:id] }
+        expect(seen_ids.count).to eq NUM_THINGS
+      end
+
+      it "does not invoke the block for any non-parameter-matching resource" do
+        hub.find(type: "room") { |res| expect(res[:type]).to eq "room" }
+      end
+
+      it "returns a list consisting of all the resources for which the block returned truthy" do
+        expected_ids = rooms[0..2].map { |room| room[:id] }.sort
+        seen_ids = []
+
+        results = hub.find(type: "room") do |res|
+          if expected_ids.include?(res[:id]) then
+            seen_ids << res[:id]
+            "this looks truthy"
+          else
+            false
+          end
+        end
+
+        expect(seen_ids.sort).to eq expected_ids
+      end
     end
   end
 
-  describe "#lights" do
-    it "lists all resources of type 'light'"
-    it "does not list any resources whose type is not 'light'"
-    it "returns Resource::Light objects"
-  end
+  context do
+    before(:each) { stub_v2_get_resources }
 
-  describe "#scenes" do
-    it "lists all resources of type 'scene'"
-    it "does not list any resources whose type is not 'scene'"
-    it "returns Resource::Scene objects"
-  end
+    context do
+      before(:each) { hub.refresh }
 
-  describe "#devices" do
-    it "lists all resources of type 'device'"
-    it "does not list any resources whose type is not 'device'"
-    it "returns Resource::Device objects"
-  end
+      [
+        ["light", Mechahue::Resource::Light],
+        ["scene", Mechahue::Resource::Scene],
+        ["device", Mechahue::Resource::Device],
+        ["room", Mechahue::Resource::Room],
+        ["zone", Mechahue::Resource::Zone],
+        ["grouped_light", Mechahue::Resource::GroupedLight],
+        ["button", Mechahue::Resource::Button],
+      ].each do |type, klass|
+        it "lists all resources of type 'light'" do
+          expect(hub.lights.count).to eq lights.count
+          hub.send(:"#{type}s").each do |thing|
+            my_things = self.send(:"#{type}s")
+            has_thing = my_things.select { |my_thing| my_thing[:id] == thing[:id] }.count > 0
+            expect(has_thing).to be true
+          end
+        end
 
-  describe "#rooms" do
-    it "lists all resources of type 'room'"
-    it "does not list any resources whose type is not 'room'"
-    it "returns Resource::Room objects"
-  end
-  
-  describe "#zones" do
-    it "lists all resources of type 'zone'"
-    it "does not list any resources whose type is not 'zone'"
-    it "returns Resource::Zone objects"
-  end
-  
-  describe "#grouped_lights" do
-    it "lists all resources of type 'grouped_light'"
-    it "does not list any resources whose type is not 'grouped_light'"
-    it "returns Resource::GroupedLight objects"
-  end
-  
-  describe "#bridges" do
-    it "lists all resources of type 'bridge'"
-    it "does not list any resources whose type is not 'bridge'"
-  end
-  
-  describe "#buttons" do
-    it "lists all resources of type 'button'"
-    it "does not list any resources whose type is not 'button'"
-    it "returns Resource::Button objects"
-  end
-  
-  describe "#bridge_homes" do
-    it "lists all resources of type 'bridge_home'"
-    it "does not list any resources whose type is not 'bridge_home'"
-  end
-  
-  describe "#rules_v1" do
-    it "makes a V1 API request for rule objects"
-    it "returns a Hash of API V1 rule objects"
-  end
-  
-  describe "#refresh" do
-    it "makes a V2 API request for /resource" do
-      url = "https://#{hub.hostname}/clip/v2/resource"
-      stub = stub_request(:get, url).to_return(body: {errors:[], data:[]}.to_json)
-      hub.refresh
-      expect(stub).to have_been_requested
+        it "does not list any resources whose type is not 'thing'" do
+          hub.send(:"#{type}s").each { |thing| expect(thing[:type]).to eq type }
+        end
+
+        it "returns Resource::Light objects" do
+          hub.send(:"#{type}s").each { |thing| expect(thing).to be_a klass }
+        end
+      end
+
+      describe "#lights" do
+        it "lists all resources of type 'light'" do
+          expect(hub.lights.count).to eq lights.count
+          hub.lights.each do |light|
+            has_light = lights.select { |my_light| my_light[:id] == light[:id] }.count > 0
+            expect(has_light).to be true
+          end
+        end
+
+        it "does not list any resources whose type is not 'light'" do
+          hub.lights.each { |light| expect(light[:type]).to eq "light" }
+        end
+
+        it "returns Resource::Light objects" do
+          hub.lights.each { |light| expect(light).to be_a Mechahue::Resource::Light }
+        end
+      end
+    end
+    
+    describe "#rules_v1" do
+      it "makes a V1 API request for rule objects"
+      it "returns a Hash of API V1 rule objects"
+    end
+    
+    describe "#refresh" do
+      it "makes a V2 API request for /resource" do
+        url = "https://#{hub.hostname}/clip/v2/resource"
+        stub = stub_request(:get, url).to_return(body: {errors:[], data:[]}.to_json)
+        hub.refresh
+        expect(stub).to have_been_requested
+      end
+
+      it "updates the info of all existing resources"
+      it "blocks until the update is complete"
+      
+      it "instantiates new resource objects for resources that were not previously known" do
+        expect(hub.resources).to be_empty
+        hub.refresh
+        expect(hub.resources).not_to be_empty
+        expect(hub.resources.count).to eq resources.count
+      end
+
+      it "does not instantiate new resource objects for previously existing resources" do
+        hub.refresh
+        existing = hub.resources.clone
+        hub.refresh
+        expect(hub.resources).to eq existing
+      end
     end
 
-    it "updates the info of all existing resources"
-    it "blocks until the update is complete"
-    it "instantiates new resource objects for resources that were not previously known"
-    it "does not instantiate new resource objects for previously existing resources"
-  end
+    describe "#resolve_reference" do
+      before(:each) do
+        stub_v2_get_resources
+        hub.refresh
+      end
 
-  describe "#resolve_reference" do
-    context "when given an invalid V2 API reference" do
-      it "raises an exception"
-    end
+      context "when given an invalid V2 API reference" do
+        it "raises an exception" do
+          expect { hub.resolve_reference({}) }.to raise_error(RuntimeError)
+          expect { hub.resolve_reference([]) }.to raise_error(RuntimeError)
+          expect { hub.resolve_reference(nil) }.to raise_error(RuntimeError)
+          expect { hub.resolve_reference(7) }.to raise_error(RuntimeError)
+          expect { hub.resolve_reference("string") }.to raise_error(RuntimeError)
 
-    context "when given a previously-known reference" do
-      it "returns the existing resource object"
-      it "does not make an API request"
-    end
+          expect { hub.resolve_reference({id: "only-id"}) }.to raise_error(RuntimeError)
+          expect { hub.resolve_reference({type: "only-type"}) }.to raise_error(RuntimeError)
+          expect { hub.resolve_reference({rid: "only-rid"}) }.to raise_error(RuntimeError)
+          expect { hub.resolve_reference({rtype: "only-rtype"}) }.to raise_error(RuntimeError)
+        end
+      end
 
-    context "when given a previously-unknown reference" do
-      it "makes a synchronous V2 API request for that object"
-      it "returns the new resource object"
+      context "when given a previously-known reference" do
+        it "returns the existing resource object" do
+          res_info = lights.first
+
+          res_object = hub.resources[res_info[:id]]
+          expect(res_object).to be_a(Mechahue::Resource::Base)
+
+          reference = make_reference_from_resource(res_info)
+          result = hub.resolve_reference(reference)
+
+          expect(result).to be res_object
+        end
+      end
+
+      context "when given a previously-unknown reference" do
+        it "makes a synchronous V2 API request for that object" do
+          info = make_light
+          stub = stub_request(:get, "https://#{hub.hostname}/clip/v2/resource/#{info[:type]}/#{info[:id]}").to_return { { body: make_v2_result([info]).to_json } }
+          hub.resolve_reference(make_reference_from_resource(info))
+          expect(stub).to have_been_requested
+        end
+
+        it "returns the new resource object" do
+          info = make_light
+          stub = stub_request(:get, "https://#{hub.hostname}/clip/v2/resource/#{info[:type]}/#{info[:id]}").to_return { { body: make_v2_result([info]).to_json } }
+          result = hub.resolve_reference(make_reference_from_resource(info))
+          expect(result).to be_a(Mechahue::Resource::Light)
+
+          info.each do |key, value|
+            expect(result[key]).to eq value
+          end
+        end
+
+        it "registers the new resource object in the resources list" do
+          info = make_light
+          stub = stub_request(:get, "https://#{hub.hostname}/clip/v2/resource/#{info[:type]}/#{info[:id]}").to_return { { body: make_v2_result([info]).to_json } }
+          hub.resolve_reference(make_reference_from_resource(info))
+          expect(hub.resources[info[:id]]).not_to be_nil
+        end
+      end
     end
   end
 

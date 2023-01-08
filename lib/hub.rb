@@ -90,16 +90,8 @@ module Mechahue
       find(type: "grouped_light")
     end
 
-    def bridges
-      find(type: "bridge")
-    end
-
     def buttons
-      find(type: "bridge")
-    end
-
-    def bridge_homes
-      find(type: "bridge_home")
+      find(type: "button")
     end
 
     def rules_v1
@@ -116,6 +108,8 @@ module Mechahue
     end
 
     def resolve_reference(info={})
+      raise "Unresolvable reference: #{info.to_json}, expected Hash argument" unless info.is_a?(Hash)
+
       id, type = if info[:id] && info[:type] then
         [info[:id], info[:type]]
       elsif info[:rid] && info[:rtype]
@@ -416,7 +410,7 @@ module Mechahue
     end
 
     def wants?(type)
-      @types.nil? || types.include?(type)
+      @types.nil? || @types.include?(type)
     end
 
     def cancelled?
