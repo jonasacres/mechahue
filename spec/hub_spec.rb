@@ -241,11 +241,69 @@ describe Mechahue::Hub do
   end
 
   describe "#activate" do
-    it "opens a connection to the event stream"
-    it "causes incoming events to be delivered to watchers"
+    let(:updates) { [
+          {
+            type: "update",
+            data: [
+              make_reference_from_resource(rooms.first)
+            ],
+            creationtime: "", # TODO: FILL THIS IN WITH ACTUAL HUE API TIMESTAMP
+          }
+        ] }
+
+    before(:each) do
+      stub_request(:get, "https://#{hub.hostname}/eventstream/clip/v2").to_return do |request|
+        { body: ": hi\n\ndata: #{updates.to_json}\n\n" }
+      end
+
+      stub_v2_get_resources
+    end
+
+    after(:each) do
+      hub.deactivate
+    end
+
+    def wait_for_event_stream
+      sleep 0.1 # TODO: lol, make this work for real
+    end
+
+    it "opens a connection to the event stream" do
+      hub.activate
+
+      wait_for_event_stream
+      expect(a_request(:get, "https://#{hub.hostname}/eventstream/clip/v2")).to have_been_made
+    end
+
+    it "causes incoming events to be delivered to watchers" do
+      notified = false
+      hub.watch do |update|
+        expect(updates.first[:data].first[:id]).to eq update.id
+        notified = true
+      end
+
+      hub.activate
+      wait_for_event_stream
+
+      expect(notified).to eq true
+    end
+
     it "makes periodic synchronous queries in the background to maintain state"
-    it "makes an immediate blocking synchronous query to establish state"
-    it "begins processing scheduled tasks"
+    
+    it "makes an immediate blocking synchronous query to establish state" do
+      hub.activate
+      wait_for_event_stream
+      expect(a_request(:get, "https://#{hub.hostname}/clip/v2/resource")).to have_been_made.at_least_once
+    end
+
+    it "begins processing scheduled tasks" do
+      invoked = false
+      hub.task(:foo, 0.01) { invoked = true }
+      hub.activate
+
+      sleep 0.1 # TODO: also lol, need a better option to waiting arbitrary times
+      expect(invoked).to be true
+    end
+
     it "restarts the event stream when disconnected"
   end
 
