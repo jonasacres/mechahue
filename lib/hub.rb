@@ -44,36 +44,50 @@ module Mechahue
       @tasks = {}
     end
 
+    # Start getting events and running background tasks. Also makes periodic synchronous requests in the background
+    # to update resource state, and makes a blocking call to establish resource state prior to returning.
     def activate
       start_event_stream
       refresh
       start_monitor
     end
 
+    # Stop periodic background tasks, synchronous state requests, and event stream processing
     def deactivate
       stop_event_stream
       stop_monitor
     end
 
+    # Watch for events. Optionally supply an array of types to look for. The only type supported right
+    # now is :update.
+    #
+    # hub.watch(:update) { |event| ... } # calls back with Mechahue::Update events
     def watch(types=nil, &block)
       @event_watchers << EventWatcher.new(types, &block)
       self
     end
 
+    # Find resources whose top-level keys match the indicated value, eg.
+    # hub.find(type: "light")  # returns an array of every light resource, as Mechahue::Resource::Light
+    #
+    # Returns an array of matches (potentially empty array)
     def find(params={})
       results = params.keys.inject(@resources.values) { |results, key| results.select { |res| res[key] == params[key] } }
       results = results.select { |resource| yield(resource) } if block_given?
       results
     end
 
+    # List every Mechahue::Resource::Light resource known in this hub
     def lights
       find(type: "light")
     end
 
+    # List every Mechahue::Resource::Scene resource known in this hub
     def scenes
       find(type: "scene")
     end
 
+    # List every Mechahue::Resource::Device resource known in this hub
     def devices
       find(type: "device")
     end
@@ -94,10 +108,13 @@ module Mechahue
       find(type: "button")
     end
 
+    # Return an hash showing every V1 API rule. Note that this is a generic hash, and not a
+    # Mechahue::Resource::Base instance.
     def rules_v1
       get_v1("/rules")
     end
 
+    # Make a synchronous request to update every resource in the hub
     def refresh
       get_v2("/resource").each do |info|
         @resources[info[:id]] ||= Resource.with_hub_and_info(self, info)
@@ -107,6 +124,15 @@ module Mechahue
       @last_refresh = Time.now
     end
 
+    # Given a reference (that is, something with thing[:id] and thing[:type] OR thing[:rid] and thing[:rtype])
+    # turn that into a Mechahue::Resource::Base instance or subclass.
+    #
+    # If the hub already has such a resource in the system, then that resource will be returned; that is, hub won't
+    # instantiate a new object or query the API for updated information.
+    # 
+    # However, if no resource of that type and ID exists, it will be queried via an API request to
+    # GET /clip/v2/resource/:type/:id, a new resource instance will be created based on the result, and
+    # the new instance will be added to the hub's cache for future use, and this instance will be returned.
     def resolve_reference(info={})
       raise "Unresolvable reference: #{info.to_json}, expected Hash argument" unless info.is_a?(Hash)
 
@@ -124,22 +150,36 @@ module Mechahue
       @resources[id]
     end
 
+    # Shorthand for request_v2(:get, endpoint, nil, {}, params)
     def get_v2(endpoint, params={})
       request_v2(:get, endpoint, nil, {}, params)
     end
 
+    # Shorthand for request_v2(:post, endpoint, payload, {}, params)
     def post_v2(endpoint, payload, params={})
       request_v2(:post, endpoint, payload.to_json, {}, params)
     end
 
+    # Shorthand for request_v2(:put, endpoint, payload, {}, params)
     def put_v2(endpoint, payload, params={})
       request_v2(:put, endpoint, payload.to_json, {}, params)
     end
 
+    # Shorthand for request_v2(:delete, endpoint, nil, {}, params)
     def delete_v2(endpoint, params={})
       request_v2(:delete, endpoint, nil, {}, params)
     end
 
+    # Make a V2 API request with the specified method and endpoint.
+    # Specify method as :get, :post, :delete, :put.
+    # Note that the endpoint is relative to the /clip/v2 endpoint that acts as the root for all V2 API requests.
+    #
+    # params:
+    #   ignore_errors: set to falsey to raise exception on all HTTP/API errors
+    #                  set to :comm to ignore V2 API errors that include the phrase "communication issues"
+    #
+    # Raises RequestFailedException on error.
+    # Returns 'data' array from parsed top-level JSON object.
     def request_v2(method, endpoint, payload=nil, headers={}, params={})
       resp, result = rest_request(method, File.join("/clip/v2", endpoint), payload, { :"hue-application-key" => @key }.merge(headers), params)
 
@@ -184,6 +224,8 @@ module Mechahue
       request_v1(:delete, endpoint)
     end
 
+    # Make a V1 API request with the specified method, endpoint, payload and headers.
+    # Note that the endpoint is relative to the /api/:username path that acts as the root of alL V1 API requests.
     def request_v1(method, endpoint, payload=nil, headers={}, params={})
       args = {
       }.merge(params)
@@ -192,6 +234,15 @@ module Mechahue
       return result
     end
 
+    # Make a generic REST request to the specified endpoint. Note that the endpoint is relative to the top-level of the host,
+    # and does not have an implied prefix of any particular API root.
+    #
+    # params:
+    #   max_retries: how many times to re-attempt messages that receive HTTP 429 (default 5)
+    #   retry_delay: Time. in seconds, to wait between retries of messages (default 0.250)
+    #   rest_args: Additional arguments to provide to RestClient::Request.execute
+    #
+    # By default, this method does NOT validate SSL certificates.
     def rest_request(method, endpoint, payload=nil, headers={}, params={})
       args = {
         rest_args:{},
@@ -245,11 +296,19 @@ module Mechahue
       return [resp, result]
     end
 
+    # Schedule a task to be invoked periodically when the hub is active. Tasks are not invoked when the hub
+    # is inactive. A hub is active after hub.activate has been called, and is inactive after hub.deactivate has
+    # been called. Hubs are inactive by default.
+    #
+    # If another task existed with the same task ID, it will be overwritten and will no longer be invoked.
+    # interval: minimum time, in seconds, between invocations.
     def task(task_id, interval, &block)
       @tasks[task_id] = { task_id: task_id, next_update: Time.now, interval: interval, block: block }
       self
     end
 
+    # Delete a previously scheduled task. It is not an error to specify a task_id that has not previously been
+    # scheduled, or that has been previously ended.
     def end_task(task_id)
       @tasks.delete(task_id)
       self
